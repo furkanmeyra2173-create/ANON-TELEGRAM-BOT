@@ -156,11 +156,11 @@ async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     user_id = query.from_user.id
     data = query.data or ""
 
     if data.startswith("lang:"):
+        await query.answer()
         language = data.split(":", 1)[1]
         if language not in LANGUAGES:
             return
@@ -169,9 +169,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "menu:language":
+        await query.answer()
         await send_language_picker(update, context)
         return
 
+    await query.answer()
     language = get_language(user_id) or "en"
     labels = LANGUAGES[language]
 
