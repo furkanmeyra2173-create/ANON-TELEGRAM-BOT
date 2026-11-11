@@ -303,6 +303,8 @@ async function handleUpdate(update, env) {
       }
       await env.BOT_DATA.put(`pending_file_name:${userId}`, name);
       await env.BOT_DATA.put(`admin_step:${userId}`, "file_upload");
+      const oldPromptId = await env.BOT_DATA.get(`admin_prompt:${userId}`);
+      if (oldPromptId) await deleteTelegramMessage(env, chatId, Number(oldPromptId));
       await deleteTelegramMessage(env, chatId, msg.message_id);
       const prompt = await tg(env, "sendMessage", {
         chat_id: chatId,
@@ -477,9 +479,12 @@ async function handleUpdate(update, env) {
       if (String(userId) !== String(env.ADMIN_ID || "")) return;
       await env.BOT_DATA.put(`admin_step:${userId}`, "file_name");
       await env.BOT_DATA.delete(`pending_file_name:${userId}`);
-      await sendText(env, chatId, "✍️ Önce dosyanın kullanıcıların göreceği adını yaz. Örnek: ANON H4X v2.0", {
+      const prompt = await tg(env, "sendMessage", {
+        chat_id: chatId,
+        text: "✍️ Önce dosyanın kullanıcıların göreceği adını yaz. Örnek: ANON H4X v2.0",
         reply_markup: { inline_keyboard: [[{ text: "❌ İptal", callback_data: "admin:file:cancel" }]] }
       });
+      if (prompt?.result?.message_id) await env.BOT_DATA.put(`admin_prompt:${userId}`, String(prompt.result.message_id));
       return;
     }
     if (data === "admin:file:list") {
@@ -503,6 +508,9 @@ async function handleUpdate(update, env) {
       if (String(userId) !== String(env.ADMIN_ID || "")) return;
       await env.BOT_DATA.delete(`admin_step:${userId}`);
       await env.BOT_DATA.delete(`pending_file_name:${userId}`);
+      const promptId = await env.BOT_DATA.get(`admin_prompt:${userId}`);
+      if (promptId) await deleteTelegramMessage(env, chatId, Number(promptId));
+      await env.BOT_DATA.delete(`admin_prompt:${userId}`);
       await sendAdminPanel(env, chatId, lang);
       return;
     }
