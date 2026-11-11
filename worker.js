@@ -113,8 +113,7 @@ function mainKeyboard(lang) {
     [{ text: t.help, callback_data: "menu:help" }, { text: t.language, callback_data: "menu:language" }],
     [{ text: lang === "tr" ? "⚙️ Ayarlar" : "⚙️ Settings", callback_data: "menu:settings" }],
     [{ text: lang === "tr" ? "📁 Dosyalar" : "📁 Files", callback_data: "menu:files" }],
-    [{ text: lang === "tr" ? "👤 Profilim" : "👤 My profile", callback_data: "menu:profile" }],
-    [{ text: lang === "tr" ? "✨ AI araçları" : "✨ AI tools", callback_data: "menu:features" }]
+    [{ text: lang === "tr" ? "👤 Profilim" : "👤 My profile", callback_data: "menu:profile" }]
   ] };
 }
 
@@ -154,12 +153,16 @@ async function getLang(env, userId) {
   return (await env.BOT_DATA.get(`lang:${userId}`)) || "en";
 }
 
+function isAdmin(env,userId) {
+  const configured=String(env.ADMIN_ID||"").trim();
+  return configured.length>0 && String(userId).trim()===configured;
+}
 async function showHome(env, chatId, userId, lang) {
   const t = LANGUAGES[lang] || LANGUAGES.en;
   await env.BOT_DATA.put(`lang:${userId}`, lang);
   await env.BOT_DATA.delete(`mode:${userId}`);
   const keyboard = mainKeyboard(lang);
-  if (String(userId) === String(env.ADMIN_ID || "")) {
+  if (isAdmin(env,userId)) {
     keyboard.inline_keyboard.push([{ text: "👑 Özel / Yönetici", callback_data: "menu:admin" }]);
   }
   await sendText(env, chatId, `${t.welcome}\n\n${t.menu}`, { reply_markup: keyboard });
@@ -419,6 +422,15 @@ async function handleUpdate(update, env) {
       return;
     }
 
+    if (text === "/admin") {
+      if (!isAdmin(env,userId)) {
+        await sendText(env,chatId,"⛔ Yönetici yetkisi bulunamadı. Cloudflare'daki ADMIN_ID secret değerini kontrol et.");
+        return;
+      }
+      await sendAdminPanel(env,chatId,await getLang(env,userId));
+      return;
+    }
+
     if (text === "/files") {
       await sendFilesMenu(env, chatId, userId, await getLang(env, userId));
       return;
@@ -641,7 +653,7 @@ async function handleUpdate(update, env) {
     }
 
     if (data === "menu:admin") {
-      if (String(userId) !== String(env.ADMIN_ID || "")) {
+      if (!isAdmin(env,userId)) {
         await sendText(env, chatId, "⛔ Yetkin yok.");
         return;
       }
@@ -776,8 +788,8 @@ async function handleUpdate(update, env) {
     }
 
     if (data === "menu:ai") {
-      await env.BOT_DATA.put(`mode:${userId}`, "ai");
-      await sendText(env, chatId, t.aiIntro, { reply_markup: { inline_keyboard: [[{ text: lang === "tr" ? "⬅️ Ana menü" : "⬅️ Main menu", callback_data: "back:home" }]] } });
+      await env.BOT_DATA.delete(`mode:${userId}`);
+      await sendText(env, chatId, "🤖 Yapay zekâ bölümüne hoş geldin!\\nBir özellik seç:", { reply_markup: featureKeyboard(lang) });
       return;
     }
     if (data === "menu:language") {
