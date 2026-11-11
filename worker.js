@@ -102,7 +102,8 @@ function mainKeyboard(lang) {
     [{ text: t.ai, callback_data: "menu:ai" }],
     [{ text: t.premium, callback_data: "menu:premium" }, { text: t.wallet, callback_data: "menu:wallet" }],
     [{ text: t.help, callback_data: "menu:help" }, { text: t.language, callback_data: "menu:language" }],
-    [{ text: lang === "tr" ? "⚙️ Ayarlar" : "⚙️ Settings", callback_data: "menu:settings" }]
+    [{ text: lang === "tr" ? "⚙️ Ayarlar" : "⚙️ Settings", callback_data: "menu:settings" }],
+    [{ text: lang === "tr" ? "📁 Dosyalar" : "📁 Files", callback_data: "menu:files" }]
   ] };
 }
 
@@ -201,13 +202,83 @@ async function callGemini(env, userId, lang, userText) {
   return answer;
 }
 
+
+async function getStoredFiles(env) {
+  try {
+    const files = JSON.parse(await env.BOT_DATA.get("public:files") || "[]");
+    return Array.isArray(files) ? files : [];
+  } catch { return []; }
+}
+
+async function sendFilesMenu(env, chatId, userId, lang) {
+  const files = await getStoredFiles(env);
+  const tr = lang === "tr";
+  if (!files.length) {
+    await sendText(env, chatId, tr ? "📁 Henüz paylaşılmış dosya yok." : "📁 No files have been shared yet.", {
+      reply_markup: { inline_keyboard: [[{ text: tr ? "⬅️ Ana menü" : "⬅️ Main menu", callback_data: "back:home" }]] }
+    });
+    return;
+  }
+  const rows = files.slice(0, 50).map((file, index) => [{
+    text: `📄 ${String(file.name || "Dosya").slice(0, 55)}`,
+    callback_data: `file:get:${index}`
+  }]);
+  rows.push([{ text: tr ? "⬅️ Ana menü" : "⬅️ Main menu", callback_data: "back:home" }]);
+  await sendText(env, chatId, tr ? `📁 Paylaşılan dosyalar (${files.length})\nİndirmek istediğin dosyaya dokun:` : `📁 Shared files (${files.length})\nTap a file to download:`, {
+    reply_markup: { inline_keyboard: rows }
+  });
+}
+
+async function saveIncomingDocument(msg, env) {
+  const doc = msg.document;
+  if (!doc?.file_id) return false;
+  const files = await getStoredFiles(env);
+  const name = String(doc.file_name || "dosya");
+  const entry = {
+    name: name.slice(0, 180),
+    file_id: doc.file_id,
+    file_unique_id: doc.file_unique_id || "",
+    size: doc.file_size || 0,
+    mime_type: doc.mime_type || "",
+    caption: String(msg.caption || "").slice(0, 500),
+    updated_at: new Date().toISOString()
+  };
+  const existing = files.findIndex(item => String(item.name).toLocaleLowerCase() === entry.name.toLocaleLowerCase());
+  if (existing >= 0) files[existing] = entry;
+  else files.unshift(entry);
+  await env.BOT_DATA.put("public:files", JSON.stringify(files.slice(0, 100)));
+  return existing >= 0;
+}
+
 async function handleUpdate(update, env) {
   if (update.message) {
     const msg = update.message;
-    if (!msg.from || !msg.chat || !msg.text) return;
+    if (!msg.from || !msg.chat || (!msg.text && !msg.document)) return;
     const userId = msg.from.id;
     const chatId = msg.chat.id;
-    const text = msg.text.trim();
+    const text = (msg.text || "").trim();
+
+    if (msg.document) {
+      if (String(userId) !== String(env.ADMIN_ID || "")) {
+        await sendText(env, chatId, "⛔ Bu işlem yalnızca bot yöneticisi tarafından yapılabilir.");
+        return;
+      }
+      const replaced = await saveIncomingDocument(msg, env);
+      await sendText(env, chatId, replaced
+        ? `♻️ ${msg.document.file_name || "Dosya"} güncellendi. Kullanıcılar /files ile görebilir.`
+        : `✅ ${msg.document.file_name || "Dosya"} kaydedildi. Kullanıcılar /files ile görebilir.`);
+      return;
+    }
+
+    if (text === "/myid") {
+      await sendText(env, chatId, `Telegram kullanıcı ID'n: ${userId}\nBunu Cloudflare'da ADMIN_ID secret olarak kaydet.`);
+      return;
+    }
+
+    if (text === "/files") {
+      await sendFilesMenu(env, chatId, userId, await getLang(env, userId));
+      return;
+    }
 
     if (text === "/start" || text === "/language") {
       await env.BOT_DATA.delete(`mode:${userId}`);
@@ -224,7 +295,7 @@ async function handleUpdate(update, env) {
 
     if (text === "/help") {
       const lang = await getLang(env, userId);
-      await sendText(env, chatId, "Commands: /start, /language, /help, /exit, /reset, /remember <note>, /memory, /forget, /settings");
+      await sendText(env, chatId, "Commands: /start, /language, /help, /exit, /reset, /remember <note>, /memory, /forget, /settings, /files, /myid");
       return;
     }
 
@@ -322,6 +393,22 @@ async function handleUpdate(update, env) {
     const data = q.data || "";
     await tg(env, "answerCallbackQuery", { callback_query_id: q.id });
 
+    if (data.startsWith("file:get:")) {
+      const index = Number(data.split(":")[2]);
+      const files = await getStoredFiles(env);
+      if (!Number.isInteger(index) || index < 0 || index >= files.length) {
+        await sendText(env, chatId, tr ? "Dosya bulunamadı; /files ile listeyi yenile." : "File not found; refresh with /files.");
+        return;
+      }
+      const file = files[index];
+      await tg(env, "sendDocument", {
+        chat_id: chatId,
+        document: file.file_id,
+        caption: file.caption || file.name
+      });
+      return;
+    }
+
     if (data.startsWith("back:")) {
       const target = data.slice("back:".length);
       // Remove the current submenu message before showing the previous screen.
@@ -346,6 +433,10 @@ async function handleUpdate(update, env) {
     const t = LANGUAGES[lang];
     const tr = lang === "tr";
 
+    if (data === "menu:files") {
+      await sendFilesMenu(env, chatId, userId, lang);
+      return;
+    }
     if (data === "menu:settings") {
       await sendText(env, chatId, tr ? "⚙️ Kişisel ayarların" : "⚙️ Personal settings", { reply_markup: settingsKeyboard(lang) });
       return;
