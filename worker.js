@@ -167,7 +167,7 @@ async function showHome(env, chatId, userId, lang) {
   if (isAdmin(env,userId)) {
     keyboard.inline_keyboard.push([{ text: "👑 Özel / Yönetici", callback_data: "menu:admin" }]);
   }
-  await sendText(env, chatId, `${t.welcome}\n\n${t.menu}`, { reply_markup: keyboard });
+  await sendText(env, chatId, `${t.welcome}\n\n${t.menu}\n\n(created by @Furkan_Admin73)`, { reply_markup: keyboard });
 }
 
 
@@ -357,6 +357,9 @@ async function handleUpdate(update, env) {
     const chatId = msg.chat.id;
     const text = (msg.text || "").trim();
     await registerUser(env, msg.from);
+    // Keep ordinary-user chats clean: remove the incoming message after capturing its text/document data.
+    // Admin workflow already deletes its own input at the relevant processing steps.
+    if (!isAdmin(env, userId)) await deleteTelegramMessage(env, chatId, msg.message_id);
     const step = await env.BOT_DATA.get("admin_step:" + userId);
     if (text && isAdmin(env, userId) && step === "file_price") {
       const index = Number(await env.BOT_DATA.get("file_price_index:" + userId));
