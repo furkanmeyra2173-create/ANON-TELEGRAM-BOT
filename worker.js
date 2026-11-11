@@ -413,8 +413,9 @@ async function handleUpdate(update, env) {
         await sendText(env, chatId, "Dosya adı boş olamaz. Tekrar yaz.");
         return;
       }
-      await env.BOT_DATA.put(`pending_file_name:${userId}`, name);
-      await env.BOT_DATA.put(`admin_step:${userId}`, "file_upload");
+      await env.BOT_DATA.put(`pending_file_name:${userId}`, name, { expirationTtl: 3600 });
+      await env.BOT_DATA.put(`admin_step:${userId}`, "file_upload", { expirationTtl: 3600 });
+      await env.BOT_DATA.put(`admin_upload_active:${userId}`, "1", { expirationTtl: 3600 });
       const oldPromptId = await env.BOT_DATA.get(`admin_prompt:${userId}`);
       if (oldPromptId) await deleteTelegramMessage(env, chatId, Number(oldPromptId));
       await deleteTelegramMessage(env, chatId, msg.message_id);
@@ -433,11 +434,12 @@ async function handleUpdate(update, env) {
         return;
       }
       const uploadStep = await env.BOT_DATA.get("admin_step:" + userId);
-      if (uploadStep !== "file_upload" && uploadStep !== "file_upload_more") {
+      const pendingName = await env.BOT_DATA.get("pending_file_name:" + userId);
+      const uploadActive = await env.BOT_DATA.get("admin_upload_active:" + userId);
+      if (uploadStep !== "file_upload" && uploadStep !== "file_upload_more" && !pendingName && uploadActive !== "1") {
         await sendText(env, chatId, "Önce 👑 Yönetici panelinden dosya ekleme işlemini başlat.");
         return;
       }
-      const pendingName = await env.BOT_DATA.get("pending_file_name:" + userId);
       if (uploadStep === "file_upload" && !pendingName) {
         await sendText(env, chatId, "Önce dosya adını belirle.");
         return;
@@ -446,6 +448,7 @@ async function handleUpdate(update, env) {
       const replaced = await saveIncomingDocument(msg, env, pendingName || "");
       await env.BOT_DATA.delete("pending_file_name:" + userId);
       await env.BOT_DATA.put("admin_step:" + userId, "file_upload_more", { expirationTtl: 3600 });
+      await env.BOT_DATA.put("admin_upload_active:" + userId, "1", { expirationTtl: 3600 });
       const promptId = await env.BOT_DATA.get("admin_prompt:" + userId);
       if (promptId) await deleteTelegramMessage(env, chatId, Number(promptId));
       await deleteTelegramMessage(env, chatId, msg.message_id);
@@ -768,6 +771,7 @@ async function handleUpdate(update, env) {
     if (data === "admin:file:continue") {
       if (!isAdmin(env, userId)) return;
       await env.BOT_DATA.put("admin_step:" + userId, "file_upload_more", { expirationTtl: 3600 });
+      await env.BOT_DATA.put("admin_upload_active:" + userId, "1", { expirationTtl: 3600 });
       await sendText(env, chatId, "📎 Sıradaki dosyayı belge olarak gönder. Dosya adı otomatik alınacak.", { reply_markup: { inline_keyboard: [[{ text: "✅ Tamamla", callback_data: "admin:file:done" }, { text: "❌ İptal", callback_data: "admin:file:cancel" }]] } });
       return;
     }
@@ -775,6 +779,7 @@ async function handleUpdate(update, env) {
       if (!isAdmin(env, userId)) return;
       await env.BOT_DATA.delete("admin_step:" + userId);
       await env.BOT_DATA.delete("pending_file_name:" + userId);
+      await env.BOT_DATA.delete("admin_upload_active:" + userId);
       const promptId = await env.BOT_DATA.get("admin_prompt:" + userId);
       if (promptId) await deleteTelegramMessage(env, chatId, Number(promptId));
       await env.BOT_DATA.delete("admin_prompt:" + userId);
@@ -785,6 +790,7 @@ async function handleUpdate(update, env) {
       if (String(userId) !== String(env.ADMIN_ID || "")) return;
       await env.BOT_DATA.delete(`admin_step:${userId}`);
       await env.BOT_DATA.delete(`pending_file_name:${userId}`);
+      await env.BOT_DATA.delete(`admin_upload_active:${userId}`);
       const promptId = await env.BOT_DATA.get(`admin_prompt:${userId}`);
       if (promptId) await deleteTelegramMessage(env, chatId, Number(promptId));
       await env.BOT_DATA.delete(`admin_prompt:${userId}`);
