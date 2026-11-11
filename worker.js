@@ -360,6 +360,40 @@ async function handleUpdate(update, env) {
       if(!Number.isInteger(limit)||limit<1||limit>1000){await sendText(env,chatId,"⚠️ 1-1000 arasında tam sayı gönder.");}
       else{await env.BOT_DATA.put("settings:daily_limit",String(limit));await sendAdminCenter(env,chatId);}return;
     }
+    if (text === "/cancel" && step === "googleplay_code") {
+      await env.BOT_DATA.delete("admin_step:" + userId);
+      await env.BOT_DATA.delete("topup_selection:" + userId);
+      await deleteTelegramMessage(env, chatId, msg.message_id);
+      await sendText(env, chatId, "❎ Bakiye yükleme iptal edildi.", { reply_markup: backToHomeKeyboard(await getLang(env,userId)) });
+      return;
+    }
+    if (text && step === "googleplay_code") {
+      await env.BOT_DATA.delete("admin_step:" + userId);
+      const raw = await env.BOT_DATA.get("topup_selection:" + userId);
+      await env.BOT_DATA.delete("topup_selection:" + userId);
+      await deleteTelegramMessage(env, chatId, msg.message_id);
+      let selection = null;
+      try { selection = raw ? JSON.parse(raw) : null; } catch {}
+      if (!selection || !selection.eur || !selection.credits || text.length > 100) {
+        await sendText(env, chatId, "⚠️ Yükleme isteği bulunamadı. Premium bölümünden yeniden başla.");
+        return;
+      }
+      const requestId = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+      const request = { id: requestId, userId: String(userId), chatId: String(chatId), eur: selection.eur, credits: selection.credits, status: "pending" };
+      await env.BOT_DATA.put("topup_request:" + requestId, JSON.stringify(request), { expirationTtl: 604800 });
+      const adminId = String(env.ADMIN_ID || "").trim();
+      if (!adminId) {
+        await env.BOT_DATA.delete("topup_request:" + requestId);
+        await sendText(env, chatId, "⚠️ Yönetici ayarı bulunamadı. Lütfen daha sonra tekrar dene.");
+        return;
+      }
+      await sendText(env, adminId, "💳 YENİ GOOGLE PLAY YÜKLEME TALEBİ\n\nKullanıcı ID: " + userId + "\nPaket: " + selection.eur + " € → " + selection.credits + " bakiye\nTalep: " + requestId + "\n\nGoogle Play kodu (yalnızca yöneticiye):\n" + text + "\n\nKodu Google Play hesabında kullanıp başarılı olduğunu doğruladıktan sonra onayla.", {
+        reply_markup: { inline_keyboard: [[{ text: "✅ Kodu kullandım, bakiyeyi ekle", callback_data: "topup:approve:" + requestId }, { text: "❌ Reddet", callback_data: "topup:reject:" + requestId }]] }
+      });
+      await sendText(env, chatId, "✅ Kodun yöneticiye iletildi. Google Play'de kullanımını yönetici kontrol edecek; onaylanınca " + selection.credits + " bakiye eklenecek. Otomatik doğrulama yoktur.", { reply_markup: backToHomeKeyboard(await getLang(env,userId)) });
+      return;
+    }
+
     if (text && String(userId) === String(env.ADMIN_ID || "") && step === "broadcast_message") {
       await env.BOT_DATA.delete("admin_step:" + userId);
       await deleteTelegramMessage(env, chatId, msg.message_id);
@@ -611,6 +645,37 @@ async function handleUpdate(update, env) {
       await sendText(env,chatId,"🌐 Çeviri hazır. Metni gönder.",{reply_markup:{inline_keyboard:[[{text:"⬅️ Yapay zekâ",callback_data:"menu:ai"}]]}});return;
     }
     if(data==="mode:image"){await env.BOT_DATA.put("mode:"+userId,"image");await sendText(env,chatId,"🎨 Oluşturmak istediğin görseli tarif et.",{reply_markup:{inline_keyboard:[[{text:"⬅️ Yapay zekâ",callback_data:"menu:ai"}]]}});return;}
+    if (data.startsWith("topup:approve:") || data.startsWith("topup:reject:")) {
+      if (!isAdmin(env, userId)) {
+        await tg(env, "answerCallbackQuery", { callback_query_id: q.id, text: "Yalnızca yönetici kullanabilir.", show_alert: true });
+        return;
+      }
+      const parts = data.split(":");
+      const action = parts[1], requestId = parts[2];
+      const key = "topup_request:" + requestId;
+      let request = null;
+      try { request = JSON.parse(await env.BOT_DATA.get(key) || "null"); } catch {}
+      if (!request || request.status !== "pending") {
+        await sendText(env, chatId, "⚠️ Bu talep bulunamadı veya daha önce işlendi.");
+        return;
+      }
+      if (action === "approve") {
+        const current = Number(await env.BOT_DATA.get("wallet:" + request.userId) || "0");
+        const balance = Number.isFinite(current) && current >= 0 ? current : 0;
+        await env.BOT_DATA.put("wallet:" + request.userId, String(balance + request.credits));
+        request.status = "approved";
+        await env.BOT_DATA.put(key, JSON.stringify(request), { expirationTtl: 604800 });
+        await sendText(env, request.chatId, "🎉 Google Play yüklemen onaylandı! +" + request.credits + " bakiye eklendi. Yeni bakiyen: " + (balance + request.credits));
+        await sendText(env, chatId, "✅ Talep " + requestId + " onaylandı.");
+      } else {
+        request.status = "rejected";
+        await env.BOT_DATA.put(key, JSON.stringify(request), { expirationTtl: 604800 });
+        await sendText(env, request.chatId, "❌ Google Play yükleme talebin reddedildi. Bir hata olduğunu düşünüyorsan yöneticiyle iletişime geç.");
+        await sendText(env, chatId, "❌ Talep " + requestId + " reddedildi.");
+      }
+      return;
+    }
+
     if (data === "admin:stats") {
       if (String(userId) !== String(env.ADMIN_ID || "")) return;
       const ids = await getUserIndex(env); const day = new Date().toISOString().slice(0,10); let active = 0;
@@ -804,7 +869,23 @@ async function handleUpdate(update, env) {
       return;
     }
     if (data === "menu:premium") {
-      await sendText(env, chatId, "💎 Premium sistemi henüz etkinleştirilmedi.", { reply_markup: backToHomeKeyboard(lang) });
+      await sendText(env, chatId, "💎 BAKİYE YÜKLE\n\nGoogle Play hediye kartı paketini seç. Kod yöneticiye iletilir; Google Play'de başarıyla kullanıldıktan sonra yönetici bakiyeni onaylar. Otomatik kod doğrulaması yoktur.", { reply_markup: { inline_keyboard: [
+        [{ text: "5 € → 4 bakiye", callback_data: "topup:pack:5" }],
+        [{ text: "10 € → 8 bakiye", callback_data: "topup:pack:10" }],
+        [{ text: "20 € → 16 bakiye", callback_data: "topup:pack:20" }],
+        [{ text: "50 € → 40 bakiye", callback_data: "topup:pack:50" }],
+        [{ text: "⬅️ Ana menü", callback_data: "back:home" }]
+      ] } });
+      return;
+    }
+    if (data.startsWith("topup:pack:")) {
+      const eur = Number(data.split(":")[2]);
+      const creditsByEuro = { 5: 4, 10: 8, 20: 16, 50: 40 };
+      const credits = creditsByEuro[eur];
+      if (!credits) return;
+      await env.BOT_DATA.put("topup_selection:" + userId, JSON.stringify({ eur, credits }), { expirationTtl: 900 });
+      await env.BOT_DATA.put("admin_step:" + userId, "googleplay_code", { expirationTtl: 900 });
+      await sendText(env, chatId, "🎁 " + eur + " € Google Play kodunu şimdi gönder. Kod yalnızca yöneticiye iletilecek. İptal için /cancel yaz.");
       return;
     }
     if (data === "menu:help") {
