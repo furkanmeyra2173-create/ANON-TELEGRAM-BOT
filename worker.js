@@ -112,7 +112,8 @@ function mainKeyboard(lang) {
     [{ text: t.premium, callback_data: "menu:premium" }, { text: t.wallet, callback_data: "menu:wallet" }],
     [{ text: t.help, callback_data: "menu:help" }, { text: t.language, callback_data: "menu:language" }],
     [{ text: lang === "tr" ? "⚙️ Ayarlar" : "⚙️ Settings", callback_data: "menu:settings" }],
-    [{ text: lang === "tr" ? "📁 Dosyalar" : "📁 Files", callback_data: "menu:files" }]
+    [{ text: lang === "tr" ? "📁 Dosyalar" : "📁 Files", callback_data: "menu:files" }],
+    [{ text: lang === "tr" ? "👤 Profilim" : "👤 My profile", callback_data: "menu:profile" }]
   ] };
 }
 
@@ -269,9 +270,29 @@ async function sendAdminPanel(env, chatId, lang) {
     reply_markup: { inline_keyboard: [
       [{ text: tr ? "➕ Yeni dosya ekle / güncelle" : "➕ Add / update file", callback_data: "admin:file:add" }],
       [{ text: tr ? "🗂 Dosyaları yönet" : "🗂 Manage files", callback_data: "admin:file:list" }],
+      [{ text: "📊 İstatistikler", callback_data: "admin:stats" }],
+      [{ text: "📢 Duyuru gönder", callback_data: "admin:broadcast" }],
+      [{ text: "👥 Kullanıcıları yönet", callback_data: "admin:users" }],
       [{ text: tr ? "⬅️ Geri" : "⬅️ Back", callback_data: "back:home" }]
     ] }
   });
+}
+
+async function getUserIndex(env) {
+  try { const ids = JSON.parse(await env.BOT_DATA.get("users:index") || "[]"); return Array.isArray(ids) ? ids : []; } catch { return []; }
+}
+
+async function registerUser(env, user) {
+  const id = String(user.id);
+  const ids = await getUserIndex(env);
+  if (!ids.includes(id)) { ids.push(id); await env.BOT_DATA.put("users:index", JSON.stringify(ids.slice(-5000))); }
+  let p = {};
+  try { p = JSON.parse(await env.BOT_DATA.get("user:" + id) || "{}"); } catch {}
+  p.id = id; p.username = user.username || p.username || ""; p.first_name = user.first_name || p.first_name || ""; p.last_name = user.last_name || p.last_name || "";
+  p.joined_at = p.joined_at || new Date().toISOString(); p.last_seen = new Date().toISOString();
+  await env.BOT_DATA.put("user:" + id, JSON.stringify(p));
+  const day = new Date().toISOString().slice(0,10);
+  await env.BOT_DATA.put("active:" + day + ":" + id, "1", { expirationTtl: 3456000 });
 }
 
 async function sendAdminFiles(env, chatId, lang) {
@@ -294,8 +315,22 @@ async function handleUpdate(update, env) {
     const userId = msg.from.id;
     const chatId = msg.chat.id;
     const text = (msg.text || "").trim();
+    await registerUser(env, msg.from);
+    const step = await env.BOT_DATA.get("admin_step:" + userId);
+    if (text && String(userId) === String(env.ADMIN_ID || "") && step === "broadcast_message") {
+      await env.BOT_DATA.delete("admin_step:" + userId);
+      await deleteTelegramMessage(env, chatId, msg.message_id);
+      const ids = await getUserIndex(env); let sent = 0, failed = 0;
+      for (const id of ids) {
+        if (await env.BOT_DATA.get("blocked:" + id) === "1") continue;
+        const result = await tg(env, "sendMessage", { chat_id: id, text: "📢 ANON H4X duyurusu\n\n" + text });
+        if (result && result.ok) sent++; else failed++;
+      }
+      await sendText(env, chatId, "✅ Duyuru tamamlandı.\nGönderildi: " + sent + "\nBaşarısız: " + failed, { reply_markup: { inline_keyboard: [[{ text: "👑 Yönetici paneli", callback_data: "menu:admin" }]] } });
+      return;
+    }
 
-    if (text && String(userId) === String(env.ADMIN_ID || "") && await env.BOT_DATA.get(`admin_step:${userId}`) === "file_name") {
+    if (text && String(userId) === String(env.ADMIN_ID || "") && step === "file_name") {
       const name = text.trim().slice(0, 180);
       if (!name) {
         await sendText(env, chatId, "Dosya adı boş olamaz. Tekrar yaz.");
@@ -433,8 +468,11 @@ async function handleUpdate(update, env) {
       return;
     }
 
+    if (await env.BOT_DATA.get("blocked:" + userId) === "1") return;
     const autoNote = getAutoMemoryNote(text);
     const autoSaved = autoNote ? await saveAutoMemory(env, userId, autoNote) : false;
+    await env.BOT_DATA.put("stats:ai", String(Number(await env.BOT_DATA.get("stats:ai") || "0") + 1));
+    await env.BOT_DATA.put("user:ai:" + userId, String(Number(await env.BOT_DATA.get("user:ai:" + userId) || "0") + 1));
     if (autoSaved) {
       await sendText(env, chatId, lang === "tr"
         ? "🧠 Bu bilgiyi kişisel hafızana otomatik olarak kaydettim. Görmek için /memory, silmek için /forget."
@@ -468,6 +506,51 @@ async function handleUpdate(update, env) {
     }
     const lang = await getLang(env, userId);
     const tr = lang === "tr";
+    await registerUser(env, q.from);
+    if (await env.BOT_DATA.get("blocked:" + userId) === "1" && String(userId) !== String(env.ADMIN_ID || "")) {
+      await tg(env, "answerCallbackQuery", { callback_query_id: q.id, text: "Bu botu kullanma erişimin kapatıldı.", show_alert: true }); return;
+    }
+
+    if (data === "admin:stats") {
+      if (String(userId) !== String(env.ADMIN_ID || "")) return;
+      const ids = await getUserIndex(env); const day = new Date().toISOString().slice(0,10); let active = 0;
+      for (const id of ids) if (await env.BOT_DATA.get("active:" + day + ":" + id)) active++;
+      await sendText(env, chatId, "📊 ANON H4X İstatistikleri\n\n👥 Toplam kullanıcı: " + ids.length + "\n🟢 Bugün aktif: " + active + "\n🤖 AI mesajı: " + (await env.BOT_DATA.get("stats:ai") || "0"), { reply_markup: { inline_keyboard: [[{ text: "⬅️ Yönetici paneli", callback_data: "menu:admin" }]] } }); return;
+    }
+    if (data === "admin:broadcast") {
+      if (String(userId) !== String(env.ADMIN_ID || "")) return;
+      await env.BOT_DATA.put("admin_step:" + userId, "broadcast_message");
+      await sendText(env, chatId, "📢 Bütün kullanıcılara gönderilecek duyuruyu şimdi yaz.", { reply_markup: { inline_keyboard: [[{ text: "❌ İptal", callback_data: "admin:broadcast:cancel" }]] } }); return;
+    }
+    if (data === "admin:broadcast:cancel") {
+      if (String(userId) !== String(env.ADMIN_ID || "")) return;
+      await env.BOT_DATA.delete("admin_step:" + userId); await sendAdminPanel(env, chatId, lang); return;
+    }
+    if (data === "admin:users" || data.startsWith("admin:user:toggle:")) {
+      if (String(userId) !== String(env.ADMIN_ID || "")) return;
+      if (data.startsWith("admin:user:toggle:")) {
+        const target = data.slice("admin:user:toggle:".length);
+        if (target !== String(env.ADMIN_ID)) {
+          const key = "blocked:" + target;
+          if (await env.BOT_DATA.get(key) === "1") await env.BOT_DATA.delete(key); else await env.BOT_DATA.put(key, "1");
+        }
+      }
+      const ids = await getUserIndex(env); const rows = [];
+      for (const id of ids.slice(-40).reverse()) {
+        let p = {}; try { p = JSON.parse(await env.BOT_DATA.get("user:" + id) || "{}"); } catch {}
+        const blocked = await env.BOT_DATA.get("blocked:" + id) === "1";
+        const name = p.username ? "@" + p.username : (p.first_name || id);
+        rows.push([{ text: (blocked ? "🚫 " : "👤 ") + name.slice(0, 28), callback_data: "admin:user:toggle:" + id }]);
+      }
+      rows.push([{ text: "⬅️ Yönetici paneli", callback_data: "menu:admin" }]);
+      await sendText(env, chatId, "👥 Kullanıcılar (" + ids.length + ")\nKullanıcıya dokunarak engelle veya engeli kaldır.", { reply_markup: { inline_keyboard: rows } }); return;
+    }
+    if (data === "menu:profile") {
+      let p = {}; try { p = JSON.parse(await env.BOT_DATA.get("user:" + userId) || "{}"); } catch {}
+      const joined = p.joined_at ? new Date(p.joined_at).toLocaleDateString("tr-TR") : "Bilinmiyor";
+      const ai = await env.BOT_DATA.get("user:ai:" + userId) || "0";
+      await sendText(env, chatId, "👤 Profilim\n\n🆔 ID: " + userId + "\n👋 İsim: " + (p.first_name || q.from.first_name || "—") + "\n🔗 Kullanıcı adı: " + (p.username ? "@" + p.username : "Yok") + "\n🌍 Dil: " + (LANGUAGES[lang] || LANGUAGES.en).name + "\n📅 Kayıt: " + joined + "\n🤖 AI mesajların: " + ai, { reply_markup: { inline_keyboard: [[{ text: "⬅️ Ana menü", callback_data: "back:home" }]] } }); return;
+    }
 
     if (data === "menu:admin") {
       if (String(userId) !== String(env.ADMIN_ID || "")) {
