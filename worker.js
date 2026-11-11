@@ -21,8 +21,8 @@ const TOPUP_CURRENCIES = {
   TRY: { label: "Türk Lirası (₺)", symbol: "₺", region: "Türkiye" }
 };
 const TOPUP_PACKAGES = {
-  EUR: [{ amount: 5, credits: 50 }, { amount: 10, credits: 120 }, { amount: 25, credits: 330 }, { amount: 50, credits: 750 }],
-  USD: [{ amount: 10, credits: 110 }, { amount: 25, credits: 300 }, { amount: 50, credits: 650 }, { amount: 100, credits: 1400 }],
+  EUR: [{ amount: 5, credits: 25 }, { amount: 10, credits: 55 }, { amount: 25, credits: 145 }, { amount: 50, credits: 320 }],
+  USD: [{ amount: 10, credits: 55 }, { amount: 25, credits: 140 }, { amount: 50, credits: 300 }, { amount: 100, credits: 650 }],
   TRY: [{ amount: 25, credits: 7 }, { amount: 50, credits: 15 }, { amount: 100, credits: 32 }, { amount: 250, credits: 85 }]
 };
 
