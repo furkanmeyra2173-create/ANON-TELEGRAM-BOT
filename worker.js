@@ -269,7 +269,7 @@ async function sendAdminPanel(env, chatId, lang) {
     reply_markup: { inline_keyboard: [
       [{ text: tr ? "➕ Yeni dosya ekle / güncelle" : "➕ Add / update file", callback_data: "admin:file:add" }],
       [{ text: tr ? "🗂 Dosyaları yönet" : "🗂 Manage files", callback_data: "admin:file:list" }],
-      [{ text: tr ? "⬅️ Ana menü" : "⬅️ Main menu", callback_data: "back:home" }]
+      [{ text: tr ? "⬅️ Geri" : "⬅️ Back", callback_data: "back:home" }]
     ] }
   });
 }
