@@ -115,7 +115,11 @@ async function showHome(env, chatId, userId, lang) {
   const t = LANGUAGES[lang] || LANGUAGES.en;
   await env.BOT_DATA.put(`lang:${userId}`, lang);
   await env.BOT_DATA.delete(`mode:${userId}`);
-  await sendText(env, chatId, `${t.welcome}\n\n${t.menu}`, { reply_markup: mainKeyboard(lang) });
+  const keyboard = mainKeyboard(lang);
+  if (String(userId) === String(env.ADMIN_ID || "")) {
+    keyboard.inline_keyboard.push([{ text: "👑 Özel / Yönetici", callback_data: "menu:admin" }]);
+  }
+  await sendText(env, chatId, `${t.welcome}\n\n${t.menu}`, { reply_markup: keyboard });
 }
 
 
@@ -229,13 +233,13 @@ async function sendFilesMenu(env, chatId, userId, lang) {
   });
 }
 
-async function saveIncomingDocument(msg, env) {
+async function saveIncomingDocument(msg, env, customName = "") {
   const doc = msg.document;
   if (!doc?.file_id) return false;
   const files = await getStoredFiles(env);
-  const name = String(doc.file_name || "dosya");
+  const name = String(customName || doc.file_name || "dosya").trim().slice(0, 180);
   const entry = {
-    name: name.slice(0, 180),
+    name,
     file_id: doc.file_id,
     file_unique_id: doc.file_unique_id || "",
     size: doc.file_size || 0,
@@ -250,6 +254,30 @@ async function saveIncomingDocument(msg, env) {
   return existing >= 0;
 }
 
+async function sendAdminPanel(env, chatId, lang) {
+  const tr = lang === "tr";
+  await sendText(env, chatId, tr ? "👑 Yönetici paneli\nDosya eklemek için önce dosya adını belirle." : "👑 Admin panel\nChoose a name before uploading a file.", {
+    reply_markup: { inline_keyboard: [
+      [{ text: tr ? "➕ Yeni dosya ekle / güncelle" : "➕ Add / update file", callback_data: "admin:file:add" }],
+      [{ text: tr ? "🗂 Dosyaları yönet" : "🗂 Manage files", callback_data: "admin:file:list" }],
+      [{ text: tr ? "⬅️ Ana menü" : "⬅️ Main menu", callback_data: "back:home" }]
+    ] }
+  });
+}
+
+async function sendAdminFiles(env, chatId, lang) {
+  const files = await getStoredFiles(env);
+  const tr = lang === "tr";
+  const rows = files.map((file, index) => [
+    { text: `📄 ${String(file.name).slice(0, 35)}`, callback_data: `admin:file:noop:${index}` },
+    { text: tr ? "🗑 Sil" : "🗑 Delete", callback_data: `admin:file:del:${index}` }
+  ]);
+  rows.push([{ text: tr ? "⬅️ Geri" : "⬅️ Back", callback_data: "menu:admin" }]);
+  await sendText(env, chatId, tr ? `🗂 Dosyaların (${files.length})` : `🗂 Your files (${files.length})`, {
+    reply_markup: { inline_keyboard: rows.length ? rows : [[{ text: tr ? "Henüz dosya yok" : "No files yet", callback_data: "menu:admin" }]] }
+  });
+}
+
 async function handleUpdate(update, env) {
   if (update.message) {
     const msg = update.message;
@@ -258,15 +286,38 @@ async function handleUpdate(update, env) {
     const chatId = msg.chat.id;
     const text = (msg.text || "").trim();
 
+    if (text && String(userId) === String(env.ADMIN_ID || "") && await env.BOT_DATA.get(`admin_step:${userId}`) === "file_name") {
+      const name = text.trim().slice(0, 180);
+      if (!name) {
+        await sendText(env, chatId, "Dosya adı boş olamaz. Tekrar yaz.");
+        return;
+      }
+      await env.BOT_DATA.put(`pending_file_name:${userId}`, name);
+      await env.BOT_DATA.put(`admin_step:${userId}`, "file_upload");
+      await sendText(env, chatId, `📎 Dosya adı: “${name}”\nŞimdi dosyanın kendisini belge olarak gönder.`, {
+        reply_markup: { inline_keyboard: [[{ text: "❌ İptal", callback_data: "admin:file:cancel" }]] }
+      });
+      return;
+    }
+
     if (msg.document) {
       if (String(userId) !== String(env.ADMIN_ID || "")) {
         await sendText(env, chatId, "⛔ Bu işlem yalnızca bot yöneticisi tarafından yapılabilir.");
         return;
       }
-      const replaced = await saveIncomingDocument(msg, env);
+      const pendingName = await env.BOT_DATA.get(`pending_file_name:${userId}`);
+      if (!pendingName) {
+        await sendText(env, chatId, "Önce 👑 Yönetici panelinden dosya adı belirle.");
+        return;
+      }
+      const replaced = await saveIncomingDocument(msg, env, pendingName);
+      await env.BOT_DATA.delete(`pending_file_name:${userId}`);
+      await env.BOT_DATA.delete(`admin_step:${userId}`);
       await sendText(env, chatId, replaced
-        ? `♻️ ${msg.document.file_name || "Dosya"} güncellendi. Kullanıcılar /files ile görebilir.`
-        : `✅ ${msg.document.file_name || "Dosya"} kaydedildi. Kullanıcılar /files ile görebilir.`);
+        ? `♻️ “${pendingName}” dosyası güncellendi. Kullanıcılar Dosyalar bölümünden erişebilir.`
+        : `✅ “${pendingName}” dosyası kaydedildi. Kullanıcılar Dosyalar bölümünden erişebilir.`, {
+          reply_markup: { inline_keyboard: [[{ text: "👑 Yönetici paneli", callback_data: "menu:admin" }]] }
+        });
       return;
     }
 
@@ -392,6 +443,50 @@ async function handleUpdate(update, env) {
     const chatId = q.message.chat.id;
     const data = q.data || "";
     await tg(env, "answerCallbackQuery", { callback_query_id: q.id });
+    const lang = await getLang(env, userId);
+    const tr = lang === "tr";
+
+    if (data === "menu:admin") {
+      if (String(userId) !== String(env.ADMIN_ID || "")) {
+        await sendText(env, chatId, "⛔ Yetkin yok.");
+        return;
+      }
+      await sendAdminPanel(env, chatId, lang);
+      return;
+    }
+    if (data === "admin:file:add") {
+      if (String(userId) !== String(env.ADMIN_ID || "")) return;
+      await env.BOT_DATA.put(`admin_step:${userId}`, "file_name");
+      await env.BOT_DATA.delete(`pending_file_name:${userId}`);
+      await sendText(env, chatId, "✍️ Önce dosyanın kullanıcıların göreceği adını yaz. Örnek: ANON H4X v2.0", {
+        reply_markup: { inline_keyboard: [[{ text: "❌ İptal", callback_data: "admin:file:cancel" }]] }
+      });
+      return;
+    }
+    if (data === "admin:file:list") {
+      if (String(userId) !== String(env.ADMIN_ID || "")) return;
+      await sendAdminFiles(env, chatId, lang);
+      return;
+    }
+    if (data.startsWith("admin:file:noop:")) return;
+    if (data.startsWith("admin:file:del:")) {
+      if (String(userId) !== String(env.ADMIN_ID || "")) return;
+      const index = Number(data.split(":")[3]);
+      const files = await getStoredFiles(env);
+      if (Number.isInteger(index) && index >= 0 && index < files.length) {
+        files.splice(index, 1);
+        await env.BOT_DATA.put("public:files", JSON.stringify(files));
+      }
+      await sendAdminFiles(env, chatId, lang);
+      return;
+    }
+    if (data === "admin:file:cancel") {
+      if (String(userId) !== String(env.ADMIN_ID || "")) return;
+      await env.BOT_DATA.delete(`admin_step:${userId}`);
+      await env.BOT_DATA.delete(`pending_file_name:${userId}`);
+      await sendAdminPanel(env, chatId, lang);
+      return;
+    }
 
     if (data.startsWith("file:get:")) {
       const index = Number(data.split(":")[2]);
@@ -429,9 +524,7 @@ async function handleUpdate(update, env) {
       return;
     }
 
-    const lang = await getLang(env, userId);
     const t = LANGUAGES[lang];
-    const tr = lang === "tr";
 
     if (data === "menu:files") {
       await sendFilesMenu(env, chatId, userId, lang);
