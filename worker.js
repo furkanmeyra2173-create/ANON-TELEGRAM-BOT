@@ -463,7 +463,9 @@ async function handleUpdate(update, env) {
     const data = q.data || "";
     await tg(env, "answerCallbackQuery", { callback_query_id: q.id });
     // Remove the screen that launched this action; the next screen/result replaces it.
-    await deleteTelegramMessage(env, chatId, q.message?.message_id);
+    if (!data.startsWith("admin:file:noop:")) {
+      await deleteTelegramMessage(env, chatId, q.message?.message_id);
+    }
     const lang = await getLang(env, userId);
     const tr = lang === "tr";
 
