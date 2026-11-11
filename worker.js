@@ -26,6 +26,7 @@ const PERSONALITIES = {
 function settingsKeyboard(lang) {
   const tr = lang === "tr";
   return { inline_keyboard: [
+    [{ text: tr ? "🌍 Dil değiştirme" : "🌍 Change language", callback_data: "menu:language" }],
     [{ text: tr ? "🎭 Kişilik ayarları" : "🎭 Personality", callback_data: "settings:personality" }],
     [{ text: tr ? "🧠 Hafızayı yönet" : "🧠 Manage memory", callback_data: "settings:memory" }],
     [{ text: tr ? "⬅️ Ana menü" : "⬅️ Main menu", callback_data: "back:home" }]
@@ -88,7 +89,7 @@ async function sendText(env, chatId, text, extra = {}) {
   }
 }
 
-function languageKeyboard() {
+function languageKeyboard(lang = "en") {
   const entries = Object.entries(LANGUAGES);
   const rows = [];
   for (let i = 0; i < entries.length; i += 2) {
@@ -96,6 +97,7 @@ function languageKeyboard() {
       text: info.name, callback_data: `lang:${code}`
     })));
   }
+  rows.push([{ text: lang === "tr" ? "⬅️ Ayarlara geri dön" : "⬅️ Back to settings", callback_data: "back:settings" }]);
   return { inline_keyboard: rows };
 }
 
@@ -110,7 +112,7 @@ function mainKeyboard(lang) {
   return { inline_keyboard: [
     [{ text: t.ai, callback_data: "menu:ai" }],
     [{ text: t.premium, callback_data: "menu:premium" }, { text: t.wallet, callback_data: "menu:wallet" }],
-    [{ text: t.help, callback_data: "menu:help" }, { text: t.language, callback_data: "menu:language" }],
+    [{ text: t.help, callback_data: "menu:help" }],
     [{ text: lang === "tr" ? "⚙️ Ayarlar" : "⚙️ Settings", callback_data: "menu:settings" }],
     [{ text: lang === "tr" ? "📁 Dosyalar" : "📁 Files", callback_data: "menu:files" }],
     [{ text: lang === "tr" ? "👤 Profilim" : "👤 My profile", callback_data: "menu:profile" }]
@@ -510,8 +512,13 @@ async function handleUpdate(update, env) {
         await env.BOT_DATA.put("referrals:"+referrer,String(Number(await env.BOT_DATA.get("referrals:"+referrer)||"0")+1));
         await tg(env,"sendMessage",{chat_id:referrer,text:"🎉 Yeni davet katıldı! Toplam davetin: "+(await env.BOT_DATA.get("referrals:"+referrer))});
       }
-      const lang=await getLang(env,userId);
-      await sendText(env,chatId,LANGUAGES[lang].choose,{reply_markup:languageKeyboard()}); return;
+      const savedLang = await env.BOT_DATA.get(`lang:${userId}`);
+      if (savedLang && LANGUAGES[savedLang]) {
+        await showHome(env, chatId, userId, savedLang);
+      } else {
+        await sendText(env, chatId, LANGUAGES.en.choose, { reply_markup: languageKeyboard() });
+      }
+      return;
     }
     if(text==="/language"){
       const lang=await getLang(env,userId);
@@ -865,13 +872,19 @@ async function handleUpdate(update, env) {
         await sendText(env, chatId, tr ? "⚙️ Kişisel ayarların" : "⚙️ Personal settings", { reply_markup: settingsKeyboard(lang) });
       } else if (target === "memory") {
         await sendMemoryMenu(env, chatId, userId, lang);
+      } else if (target === "settings") {
+        await sendText(env, chatId, lang === "tr" ? "⚙️ Kişisel ayarların" : "⚙️ Personal settings", { reply_markup: settingsKeyboard(lang) });
       }
       return;
     }
 
+    if (data === "menu:language") {
+      await sendText(env, chatId, LANGUAGES[lang].choose, { reply_markup: languageKeyboard(lang) });
+      return;
+    }
     if (data.startsWith("lang:")) {
-      const lang = data.split(":")[1];
-      if (LANGUAGES[lang]) await showHome(env, chatId, userId, lang);
+      const selectedLang = data.split(":")[1];
+      if (LANGUAGES[selectedLang]) await showHome(env, chatId, userId, selectedLang);
       return;
     }
 
