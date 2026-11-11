@@ -220,7 +220,8 @@ async function callGemini(env, userId, lang, userText) {
     : "";
   const personalityKey = (await env.BOT_DATA.get(`personality:${userId}`)) || "default";
   const personality = PERSONALITIES[personalityKey] || PERSONALITIES.default;
-  const roomInstruction = (await env.BOT_DATA.get("room_instruction:" + userId)) || "";\n  const systemInstruction = `You are ANON H4X AI, a helpful, accurate assistant. ${roomInstruction} Reply in ${languageName} unless the user asks for another language. ${personality.instruction} You can explain concepts and write, debug, and review code in common programming languages. When providing code, use clear Markdown code fences with the correct language label, explain how to use it briefly, and never claim code was tested unless it actually was. Be honest about uncertainty. Do not assist with malware, credential theft, account compromise, or harmful cyber abuse; offer safe defensive alternatives.${memoryContext}`;
+  const roomInstruction = (await env.BOT_DATA.get("room_instruction:" + userId)) || "";
+  const systemInstruction = `You are ANON H4X AI, a helpful, accurate assistant. ${roomInstruction} Reply in ${languageName} unless the user asks for another language. ${personality.instruction} You can explain concepts and write, debug, and review code in common programming languages. When providing code, use clear Markdown code fences with the correct language label, explain how to use it briefly, and never claim code was tested unless it actually was. Be honest about uncertainty. Do not assist with malware, credential theft, account compromise, or harmful cyber abuse; offer safe defensive alternatives.${memoryContext}`;
 
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`, {
     method: "POST",
@@ -438,9 +439,9 @@ async function handleUpdate(update, env) {
 
     if (text === "/start" || text.startsWith("/start ")) {
       await env.BOT_DATA.delete(`mode:${userId}`);
-      const payload=text.split(/\\s+/)[1]||"";
+      const payload=text.split(/\s+/)[1]||"";
       const referrer=payload.startsWith("ref_")?payload.slice(4):"";
-      if(referrer && referrer!==String(userId) && /^\\d+$/.test(referrer) && await env.BOT_DATA.get("referred_by:"+userId)===null){
+      if(referrer && referrer!==String(userId) && /^\d+$/.test(referrer) && await env.BOT_DATA.get("referred_by:"+userId)===null){
         await env.BOT_DATA.put("referred_by:"+userId,referrer);
         await env.BOT_DATA.put("referrals:"+referrer,String(Number(await env.BOT_DATA.get("referrals:"+referrer)||"0")+1));
         await tg(env,"sendMessage",{chat_id:referrer,text:"🎉 Yeni davet katıldı! Toplam davetin: "+(await env.BOT_DATA.get("referrals:"+referrer))});
