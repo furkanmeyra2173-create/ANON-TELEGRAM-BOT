@@ -60,6 +60,15 @@ async function sendMemoryMenu(env, chatId, userId, lang) {
 }
 
 
+async function deleteTelegramMessage(env, chatId, messageId) {
+  if (!messageId) return;
+  try {
+    await tg(env, "deleteMessage", { chat_id: chatId, message_id: messageId });
+  } catch (error) {
+    console.error("Could not delete Telegram message", error);
+  }
+}
+
 async function tg(env, method, data) {
   const response = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/${method}`, {
     method: "POST",
@@ -294,9 +303,13 @@ async function handleUpdate(update, env) {
       }
       await env.BOT_DATA.put(`pending_file_name:${userId}`, name);
       await env.BOT_DATA.put(`admin_step:${userId}`, "file_upload");
-      await sendText(env, chatId, `📎 Dosya adı: “${name}”\nŞimdi dosyanın kendisini belge olarak gönder.`, {
+      await deleteTelegramMessage(env, chatId, msg.message_id);
+      const prompt = await tg(env, "sendMessage", {
+        chat_id: chatId,
+        text: `📎 Dosya adı: “${name}”\nŞimdi dosyanın kendisini belge olarak gönder.`,
         reply_markup: { inline_keyboard: [[{ text: "❌ İptal", callback_data: "admin:file:cancel" }]] }
       });
+      if (prompt?.result?.message_id) await env.BOT_DATA.put(`admin_prompt:${userId}`, String(prompt.result.message_id));
       return;
     }
 
@@ -313,6 +326,10 @@ async function handleUpdate(update, env) {
       const replaced = await saveIncomingDocument(msg, env, pendingName);
       await env.BOT_DATA.delete(`pending_file_name:${userId}`);
       await env.BOT_DATA.delete(`admin_step:${userId}`);
+      const promptId = await env.BOT_DATA.get(`admin_prompt:${userId}`);
+      if (promptId) await deleteTelegramMessage(env, chatId, Number(promptId));
+      await env.BOT_DATA.delete(`admin_prompt:${userId}`);
+      await deleteTelegramMessage(env, chatId, msg.message_id);
       await sendText(env, chatId, replaced
         ? `♻️ “${pendingName}” dosyası güncellendi. Kullanıcılar Dosyalar bölümünden erişebilir.`
         : `✅ “${pendingName}” dosyası kaydedildi. Kullanıcılar Dosyalar bölümünden erişebilir.`, {
@@ -443,6 +460,8 @@ async function handleUpdate(update, env) {
     const chatId = q.message.chat.id;
     const data = q.data || "";
     await tg(env, "answerCallbackQuery", { callback_query_id: q.id });
+    // Remove the screen that launched this action; the next screen/result replaces it.
+    await deleteTelegramMessage(env, chatId, q.message?.message_id);
     const lang = await getLang(env, userId);
     const tr = lang === "tr";
 
@@ -506,8 +525,6 @@ async function handleUpdate(update, env) {
 
     if (data.startsWith("back:")) {
       const target = data.slice("back:".length);
-      // Remove the current submenu message before showing the previous screen.
-      await tg(env, "deleteMessage", { chat_id: chatId, message_id: q.message.message_id });
       if (target === "home") {
         await showHome(env, chatId, userId, lang);
       } else if (target === "settings") {
