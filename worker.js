@@ -72,7 +72,12 @@ async function callGemini(env, userId, lang, userText) {
   history = history.slice(-MAX_HISTORY);
 
   const languageName = ({ tr:"Turkish", ku:"Kurdish (Kurmanji)", en:"English", ar:"Arabic", fr:"French", de:"German", hi:"Hindi", zh:"Chinese", ja:"Japanese", ko:"Korean" })[lang] || "English";
-  const systemInstruction = `You are ANON H4X AI, a helpful, accurate assistant. Reply in ${languageName} unless the user asks for another language. You can explain concepts and write, debug, and review code in common programming languages. When providing code, use clear Markdown code fences with the correct language label, explain how to use it briefly, and never claim code was tested unless it actually was. Be honest about uncertainty. Do not assist with malware, credential theft, account compromise, or harmful cyber abuse; offer safe defensive alternatives.`;
+  let personalMemory = [];
+  try { personalMemory = JSON.parse(await env.BOT_DATA.get(`memory:${userId}`) || "[]"); } catch {}
+  const memoryContext = personalMemory.length
+    ? `\\n\\nUser-approved personal memory (use only when relevant; do not assume anything beyond these notes):\\n- ${personalMemory.join("\\n- ")}`
+    : "";
+  const systemInstruction = `You are ANON H4X AI, a helpful, accurate assistant. Reply in ${languageName} unless the user asks for another language. You can explain concepts and write, debug, and review code in common programming languages. When providing code, use clear Markdown code fences with the correct language label, explain how to use it briefly, and never claim code was tested unless it actually was. Be honest about uncertainty. Do not assist with malware, credential theft, account compromise, or harmful cyber abuse; offer safe defensive alternatives.${memoryContext}`;
 
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`, {
     method: "POST",
@@ -121,7 +126,7 @@ async function handleUpdate(update, env) {
 
     if (text === "/help") {
       const lang = await getLang(env, userId);
-      await sendText(env, chatId, "Commands: /start, /language, /help, /exit, /reset");
+      await sendText(env, chatId, "Commands: /start, /language, /help, /exit, /reset, /remember <note>, /memory, /forget");
       return;
     }
 
@@ -134,7 +139,51 @@ async function handleUpdate(update, env) {
     if (text === "/reset") {
       await env.BOT_DATA.delete(`history:${userId}`);
       const lang = await getLang(env, userId);
-      await sendText(env, chatId, lang === "tr" ? "🧹 Sohbet geçmişin temizlendi." : "🧹 Chat history cleared.");
+      await sendText(env, chatId, lang === "tr" ? "🧹 Sohbet geçmişin temizlendi. Kişisel hafızan korunuyor; silmek için /forget yaz." : "🧹 Chat history cleared. Personal memory is kept; use /forget to erase it.");
+      return;
+    }
+
+    if (text.startsWith("/remember")) {
+      const note = text.slice("/remember".length).trim();
+      const lang = await getLang(env, userId);
+      if (!note) {
+        await sendText(env, chatId, lang === "tr" ? "Kullanım: /remember sevdiğim dil Türkçe\\nYalnızca kaydetmek istediğin, hassas olmayan bilgileri yaz. Şifre veya gizli anahtar kaydetme." : "Usage: /remember I prefer Turkish\\nSave only non-sensitive information you choose to remember. Never save passwords or secret keys.");
+        return;
+      }
+      if (note.length > 300) {
+        await sendText(env, chatId, lang === "tr" ? "⚠️ Her hafıza notu en fazla 300 karakter olabilir." : "⚠️ Each memory note can be up to 300 characters.");
+        return;
+      }
+      let notes = [];
+      try { notes = JSON.parse(await env.BOT_DATA.get(`memory:${userId}`) || "[]"); } catch {}
+      const normalized = note.toLocaleLowerCase();
+      if (!notes.some(item => String(item).toLocaleLowerCase() === normalized)) {
+        if (notes.length >= 20) {
+          await sendText(env, chatId, lang === "tr" ? "Hafıza dolu (20 not). Önce /forget ile temizleyebilirsin." : "Memory is full (20 notes). Use /forget to clear it first.");
+          return;
+        }
+        notes.push(note);
+        await env.BOT_DATA.put(`memory:${userId}`, JSON.stringify(notes));
+      }
+      await sendText(env, chatId, lang === "tr" ? "🧠 Bunu kişisel hafızana kaydettim. Görmek için /memory, silmek için /forget." : "🧠 Saved to your personal memory. Use /memory to view it or /forget to erase it.");
+      return;
+    }
+
+    if (text === "/memory") {
+      const lang = await getLang(env, userId);
+      let notes = [];
+      try { notes = JSON.parse(await env.BOT_DATA.get(`memory:${userId}`) || "[]"); } catch {}
+      const output = notes.length
+        ? notes.map((item, index) => `${index + 1}. ${item}`).join("\\n")
+        : (lang === "tr" ? "Kişisel hafızanda henüz kayıt yok. Kaydetmek için /remember bilgi yaz." : "No personal memories saved yet. Use /remember followed by a note.");
+      await sendText(env, chatId, `🧠 ${lang === "tr" ? "Kişisel hafızan" : "Your personal memory"}:\\n${output}`);
+      return;
+    }
+
+    if (text === "/forget") {
+      await env.BOT_DATA.delete(`memory:${userId}`);
+      const lang = await getLang(env, userId);
+      await sendText(env, chatId, lang === "tr" ? "🗑️ Kişisel hafızandaki tüm notlar silindi." : "🗑️ All personal memory notes have been deleted.");
       return;
     }
 
