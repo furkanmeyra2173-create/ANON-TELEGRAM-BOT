@@ -27,7 +27,8 @@ function settingsKeyboard(lang) {
   const tr = lang === "tr";
   return { inline_keyboard: [
     [{ text: tr ? "🎭 Kişilik ayarları" : "🎭 Personality", callback_data: "settings:personality" }],
-    [{ text: tr ? "🧠 Hafızayı yönet" : "🧠 Manage memory", callback_data: "settings:memory" }]
+    [{ text: tr ? "🧠 Hafızayı yönet" : "🧠 Manage memory", callback_data: "settings:memory" }],
+    [{ text: tr ? "⬅️ Ana menü" : "⬅️ Main menu", callback_data: "back:home" }]
   ] };
 }
 
@@ -37,7 +38,7 @@ function personalityKeyboard(lang, current) {
     text: `${current === key ? "✅ " : ""}${tr ? item.tr : item.en}`,
     callback_data: `personality:${key}`
   }]);
-  rows.push([{ text: tr ? "⬅️ Ayarlara dön" : "⬅️ Back to settings", callback_data: "menu:settings" }]);
+  rows.push([{ text: tr ? "⬅️ Geri" : "⬅️ Back", callback_data: "back:settings" }]);
   return { inline_keyboard: rows };
 }
 
@@ -54,7 +55,7 @@ async function sendMemoryMenu(env, chatId, userId, lang) {
     callback_data: `memdel:${i}`
   }]);
   if (notes.length) rows.push([{ text: tr ? "⚠️ Tüm hafızayı sil" : "⚠️ Delete all memory", callback_data: "memory:clear_confirm" }]);
-  rows.push([{ text: tr ? "⬅️ Ayarlara dön" : "⬅️ Back to settings", callback_data: "menu:settings" }]);
+  rows.push([{ text: tr ? "⬅️ Geri" : "⬅️ Back", callback_data: "back:settings" }]);
   await sendText(env, chatId, `🧠 ${tr ? "Hafıza yönetimi" : "Memory management"} (${notes.length}/20)\n\n${lines}`, { reply_markup: { inline_keyboard: rows } });
 }
 
@@ -315,6 +316,20 @@ async function handleUpdate(update, env) {
     const data = q.data || "";
     await tg(env, "answerCallbackQuery", { callback_query_id: q.id });
 
+    if (data.startsWith("back:")) {
+      const target = data.slice("back:".length);
+      // Remove the current submenu message before showing the previous screen.
+      await tg(env, "deleteMessage", { chat_id: chatId, message_id: q.message.message_id });
+      if (target === "home") {
+        await showHome(env, chatId, userId, lang);
+      } else if (target === "settings") {
+        await sendText(env, chatId, tr ? "⚙️ Kişisel ayarların" : "⚙️ Personal settings", { reply_markup: settingsKeyboard(lang) });
+      } else if (target === "memory") {
+        await sendMemoryMenu(env, chatId, userId, lang);
+      }
+      return;
+    }
+
     if (data.startsWith("lang:")) {
       const lang = data.split(":")[1];
       if (LANGUAGES[lang]) await showHome(env, chatId, userId, lang);
@@ -362,7 +377,7 @@ async function handleUpdate(update, env) {
     if (data === "memory:clear_confirm") {
       await sendText(env, chatId, tr ? "⚠️ Tüm kişisel hafıza notlarını silmek istiyor musun?" : "⚠️ Delete all personal memory notes?", { reply_markup: { inline_keyboard: [
         [{ text: tr ? "Evet, hepsini sil" : "Yes, delete all", callback_data: "memory:clear_yes" }],
-        [{ text: tr ? "Vazgeç" : "Cancel", callback_data: "settings:memory" }]
+        [{ text: tr ? "⬅️ Geri" : "⬅️ Back", callback_data: "back:memory" }]
       ] } });
       return;
     }
@@ -374,7 +389,7 @@ async function handleUpdate(update, env) {
 
     if (data === "menu:ai") {
       await env.BOT_DATA.put(`mode:${userId}`, "ai");
-      await sendText(env, chatId, t.aiIntro);
+      await sendText(env, chatId, t.aiIntro, { reply_markup: { inline_keyboard: [[{ text: lang === "tr" ? "⬅️ Ana menü" : "⬅️ Main menu", callback_data: "back:home" }]] } });
       return;
     }
     if (data === "menu:language") {
