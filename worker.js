@@ -428,27 +428,37 @@ async function handleUpdate(update, env) {
     }
 
     if (msg.document) {
-      if (String(userId) !== String(env.ADMIN_ID || "")) {
+      if (!isAdmin(env, userId)) {
         await sendText(env, chatId, "⛔ Bu işlem yalnızca bot yöneticisi tarafından yapılabilir.");
         return;
       }
-      const pendingName = await env.BOT_DATA.get(`pending_file_name:${userId}`);
-      if (!pendingName) {
-        await sendText(env, chatId, "Önce 👑 Yönetici panelinden dosya adı belirle.");
+      const uploadStep = await env.BOT_DATA.get("admin_step:" + userId);
+      if (uploadStep !== "file_upload" && uploadStep !== "file_upload_more") {
+        await sendText(env, chatId, "Önce 👑 Yönetici panelinden dosya ekleme işlemini başlat.");
         return;
       }
-      const replaced = await saveIncomingDocument(msg, env, pendingName);
-      await env.BOT_DATA.delete(`pending_file_name:${userId}`);
-      await env.BOT_DATA.delete(`admin_step:${userId}`);
-      const promptId = await env.BOT_DATA.get(`admin_prompt:${userId}`);
+      const pendingName = await env.BOT_DATA.get("pending_file_name:" + userId);
+      if (uploadStep === "file_upload" && !pendingName) {
+        await sendText(env, chatId, "Önce dosya adını belirle.");
+        return;
+      }
+      const savedName = pendingName || msg.document.file_name || "dosya";
+      const replaced = await saveIncomingDocument(msg, env, pendingName || "");
+      await env.BOT_DATA.delete("pending_file_name:" + userId);
+      await env.BOT_DATA.put("admin_step:" + userId, "file_upload_more", { expirationTtl: 3600 });
+      const promptId = await env.BOT_DATA.get("admin_prompt:" + userId);
       if (promptId) await deleteTelegramMessage(env, chatId, Number(promptId));
-      await env.BOT_DATA.delete(`admin_prompt:${userId}`);
       await deleteTelegramMessage(env, chatId, msg.message_id);
-      await sendText(env, chatId, replaced
-        ? `♻️ “${pendingName}” dosyası güncellendi. Kullanıcılar Dosyalar bölümünden erişebilir.`
-        : `✅ “${pendingName}” dosyası kaydedildi. Kullanıcılar Dosyalar bölümünden erişebilir.`, {
-          reply_markup: { inline_keyboard: [[{ text: "👑 Yönetici paneli", callback_data: "menu:admin" }]] }
-        });
+      const prompt = await tg(env, "sendMessage", {
+        chat_id: chatId,
+        text: (replaced ? "♻️ Güncellendi: " : "✅ Eklendi: ") + savedName + "\n\nBaşka dosya gönderebilirsin. Yeni dosyalar kendi dosya adlarıyla kaydedilir.",
+        reply_markup: { inline_keyboard: [
+          [{ text: "➕ Başka dosya ekle", callback_data: "admin:file:continue" }],
+          [{ text: "✅ Tamamla", callback_data: "admin:file:done" }],
+          [{ text: "❌ İptal", callback_data: "admin:file:cancel" }]
+        ] }
+      });
+      if (prompt?.result?.message_id) await env.BOT_DATA.put("admin_prompt:" + userId, String(prompt.result.message_id));
       return;
     }
 
@@ -753,6 +763,22 @@ async function handleUpdate(update, env) {
         await env.BOT_DATA.put("public:files", JSON.stringify(files));
       }
       await sendAdminFiles(env, chatId, lang);
+      return;
+    }
+    if (data === "admin:file:continue") {
+      if (!isAdmin(env, userId)) return;
+      await env.BOT_DATA.put("admin_step:" + userId, "file_upload_more", { expirationTtl: 3600 });
+      await sendText(env, chatId, "📎 Sıradaki dosyayı belge olarak gönder. Dosya adı otomatik alınacak.", { reply_markup: { inline_keyboard: [[{ text: "✅ Tamamla", callback_data: "admin:file:done" }, { text: "❌ İptal", callback_data: "admin:file:cancel" }]] } });
+      return;
+    }
+    if (data === "admin:file:done") {
+      if (!isAdmin(env, userId)) return;
+      await env.BOT_DATA.delete("admin_step:" + userId);
+      await env.BOT_DATA.delete("pending_file_name:" + userId);
+      const promptId = await env.BOT_DATA.get("admin_prompt:" + userId);
+      if (promptId) await deleteTelegramMessage(env, chatId, Number(promptId));
+      await env.BOT_DATA.delete("admin_prompt:" + userId);
+      await sendAdminPanel(env, chatId, lang);
       return;
     }
     if (data === "admin:file:cancel") {
