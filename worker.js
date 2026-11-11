@@ -217,7 +217,7 @@ async function callGemini(env, userId, lang, userText) {
     : "";
   const personalityKey = (await env.BOT_DATA.get(`personality:${userId}`)) || "default";
   const personality = PERSONALITIES[personalityKey] || PERSONALITIES.default;
-  const systemInstruction = `You are ANON H4X AI, a helpful, accurate assistant. Reply in ${languageName} unless the user asks for another language. ${personality.instruction} You can explain concepts and write, debug, and review code in common programming languages. When providing code, use clear Markdown code fences with the correct language label, explain how to use it briefly, and never claim code was tested unless it actually was. Be honest about uncertainty. Do not assist with malware, credential theft, account compromise, or harmful cyber abuse; offer safe defensive alternatives.${memoryContext}`;
+  const roomInstruction = (await env.BOT_DATA.get("room_instruction:" + userId)) || "";\n  const systemInstruction = `You are ANON H4X AI, a helpful, accurate assistant. ${roomInstruction} Reply in ${languageName} unless the user asks for another language. ${personality.instruction} You can explain concepts and write, debug, and review code in common programming languages. When providing code, use clear Markdown code fences with the correct language label, explain how to use it briefly, and never claim code was tested unless it actually was. Be honest about uncertainty. Do not assist with malware, credential theft, account compromise, or harmful cyber abuse; offer safe defensive alternatives.${memoryContext}`;
 
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`, {
     method: "POST",
