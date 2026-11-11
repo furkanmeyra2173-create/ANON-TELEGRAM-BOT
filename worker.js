@@ -142,7 +142,7 @@ async function dailyLimit(env,userId) {
 async function sendAdminCenter(env,chatId) {
   const maintenance=await env.BOT_DATA.get("settings:maintenance")==="1";
   const limit=await env.BOT_DATA.get("settings:daily_limit")||"30";
-  await sendText(env,chatId,"🕶️ ANON H4X GİZLİ KONTROL MERKEZİ\\n\\n🛠 Bakım: "+(maintenance?"AÇIK":"Kapalı")+"\\n🤖 Günlük AI limiti: "+limit,{reply_markup:{inline_keyboard:[
+  await sendText(env,chatId,"🕶️ ANON H4X GİZLİ KONTROL MERKEZİ\n\n🛠 Bakım: "+(maintenance?"AÇIK":"Kapalı")+"\n🤖 Günlük AI limiti: "+limit,{reply_markup:{inline_keyboard:[
     [{text:maintenance?"🟢 Bakımı kapat":"🔴 Bakımı aç",callback_data:"secret:maintenance"}],
     [{text:"🎚 Günlük limiti değiştir",callback_data:"secret:limit"}],
     [{text:"📊 İstatistikler",callback_data:"admin:stats"}],
@@ -522,7 +522,7 @@ async function handleUpdate(update, env) {
     const mode = await env.BOT_DATA.get(`mode:${userId}`);
     if(mode==="translate"){
       const target=await env.BOT_DATA.get("translate_to:"+userId)||"tr";
-      try{const out=await callGemini(env,userId,lang,"Translate this text into "+(LANGUAGES[target]?.name||"Turkish")+". Return only the translation:\\n"+text);await sendText(env,chatId,out);}
+      try{const out=await callGemini(env,userId,lang,"Translate this text into "+(LANGUAGES[target]?.name||"Turkish")+". Return only the translation:\n"+text);await sendText(env,chatId,out);}
       catch{await sendText(env,chatId,"⚠️ Çeviri başarısız oldu.");} return;
     }
     if(mode==="image"){
@@ -597,7 +597,7 @@ async function handleUpdate(update, env) {
     if(data==="secret:center"){if(String(userId)!==String(env.ADMIN_ID||""))return;await sendAdminCenter(env,chatId);return;}
     if(data==="secret:maintenance"){if(String(userId)!==String(env.ADMIN_ID||""))return;await env.BOT_DATA.put("settings:maintenance",await env.BOT_DATA.get("settings:maintenance")==="1"?"0":"1");await sendAdminCenter(env,chatId);return;}
     if(data==="secret:limit"){if(String(userId)!==String(env.ADMIN_ID||""))return;await env.BOT_DATA.put("admin_step:"+userId,"daily_limit");await sendText(env,chatId,"🎚 Günlük AI limitini sayı olarak gönder (1-1000).");return;}
-    if(data==="menu:features"){await sendText(env,chatId,"🤖 Yapay zekâ\\nBirini seç:",{reply_markup:featureKeyboard(lang)});return;}
+    if(data==="menu:features"){await sendText(env,chatId,"🤖 Yapay zekâ\nBirini seç:",{reply_markup:featureKeyboard(lang)});return;}
     if(data.startsWith("room:")){
       const room=data.split(":")[1];
       const instruction={general:"",coding:"You are an expert programming assistant. Focus on coding and debugging.",german:"You are a patient German A1-A2 tutor. Correct mistakes and explain simply."}[room]||"";
@@ -790,7 +790,7 @@ async function handleUpdate(update, env) {
 
     if (data === "menu:ai") {
       await env.BOT_DATA.delete(`mode:${userId}`);
-      await sendText(env, chatId, "🤖 Yapay zekâ bölümüne hoş geldin!\\nBir özellik seç:", { reply_markup: featureKeyboard(lang) });
+      await sendText(env, chatId, "🤖 Yapay zekâ bölümüne hoş geldin!\nBir özellik seç:", { reply_markup: featureKeyboard(lang) });
       return;
     }
     if (data === "menu:language") {
