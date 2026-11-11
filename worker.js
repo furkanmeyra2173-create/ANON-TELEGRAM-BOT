@@ -64,6 +64,43 @@ async function showHome(env, chatId, userId, lang) {
   await sendText(env, chatId, `${t.welcome}\n\n${t.menu}`, { reply_markup: mainKeyboard(lang) });
 }
 
+
+function getAutoMemoryNote(text) {
+  const value = text.trim();
+  const lower = value.toLocaleLowerCase();
+  const triggers = [
+    "bunu hatırla", "bunu hafızana kaydet", "aklında tut", "unutma ki",
+    "benim adım ", "adım ", "bana ... diye hitap et",
+    "tercih ederim", "tercihim ", "sevdiğim ", "en sevdiğim",
+    "remember that", "please remember", "keep in mind", "my name is ",
+    "i am called ", "i prefer ", "my preference is", "i like ",
+    "ich heiße ", "merk dir", "bitte erinnere dich", "je m'appelle ",
+    "souviens-toi", "اسمي ", "تذكر أن", "یاد رکھو", "میرا نام",
+    "私の名前は", "覚えておいて", "我叫", "请记住", "제 이름은", "기억해",
+    "navê min "
+  ];
+  if (!triggers.some(phrase => lower.includes(phrase.toLocaleLowerCase()))) return null;
+  if (value.length > 300) return null;
+
+  // Never store credentials, financial details, or sensitive personal data automatically.
+  const sensitive = /(password|passcode|secret|api[ _-]?key|token|private[ _-]?key|şifre|parola|gizli anahtar|iban|kredi kart|banka hesab|telefon numaram|adresim|hastalığım|teşhis|ilaç kullan|dinim|mezhebim|siyasi görüş|cinsel|ırkım)/i;
+  if (sensitive.test(value)) return null;
+  return value;
+}
+
+async function saveAutoMemory(env, userId, note) {
+  if (!note) return false;
+  let notes = [];
+  try { notes = JSON.parse(await env.BOT_DATA.get(`memory:${userId}`) || "[]"); } catch {}
+  if (!Array.isArray(notes)) notes = [];
+  const normalized = note.toLocaleLowerCase();
+  if (notes.some(item => String(item).toLocaleLowerCase() === normalized)) return false;
+  if (notes.length >= 20) return false;
+  notes.push(note);
+  await env.BOT_DATA.put(`memory:${userId}`, JSON.stringify(notes));
+  return true;
+}
+
 async function callGemini(env, userId, lang, userText) {
   const historyKey = `history:${userId}`;
   let history = [];
@@ -197,6 +234,14 @@ async function handleUpdate(update, env) {
     if (!env.GEMINI_API_KEY) {
       await sendText(env, chatId, "⚠️ GEMINI_API_KEY secret is missing in Cloudflare.");
       return;
+    }
+
+    const autoNote = getAutoMemoryNote(text);
+    const autoSaved = autoNote ? await saveAutoMemory(env, userId, autoNote) : false;
+    if (autoSaved) {
+      await sendText(env, chatId, lang === "tr"
+        ? "🧠 Bu bilgiyi kişisel hafızana otomatik olarak kaydettim. Görmek için /memory, silmek için /forget."
+        : "🧠 I automatically saved this to your personal memory. Use /memory to view it or /forget to erase it.");
     }
 
     await tg(env, "sendChatAction", { chat_id: chatId, action: "typing" });
