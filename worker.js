@@ -1,4 +1,3 @@
-
 const LANGUAGES = {
   tr: { name: "🇹🇷 Türkçe", choose: "🌍 Lütfen dilini seç:", welcome: "👑 ANON H4X'e hoş geldin!", menu: "Ana menü", ai: "🤖 Yapay zekâ", premium: "💎 Premium", wallet: "💰 Cüzdan", help: "ℹ️ Yardım", language: "🌍 Dil değiştir", aiIntro: "🤖 ANON H4X AI hazır! Bana soru sorabilir veya kod yazdırabilirsin.\n\nÇıkmak için /exit, sohbeti sıfırlamak için /reset yaz.", thinking: "⏳ Düşünüyorum..." },
   ku: { name: "☀️ Kurdî", choose: "🌍 Ji kerema xwe zimanê xwe hilbijêre:", welcome: "👑 Bi xêr hatî ANON H4X!", menu: "Menuya sereke", ai: "🤖 Alîkarê AI", premium: "💎 Premium", wallet: "💰 Cuzdan", help: "ℹ️ Alîkarî", language: "🌍 Ziman biguherîne", aiIntro: "🤖 ANON H4X AI amade ye! Dikare pirsan bipirsî an kodê bixwazî. Ji bo derketinê /exit, ji bo paqijkirina sohbetê /reset binivîse.", thinking: "⏳ Ez difikirim..." },
