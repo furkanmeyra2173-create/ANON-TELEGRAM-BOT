@@ -75,7 +75,7 @@ async function callGemini(env, userId, lang, userText) {
   let personalMemory = [];
   try { personalMemory = JSON.parse(await env.BOT_DATA.get(`memory:${userId}`) || "[]"); } catch {}
   const memoryContext = personalMemory.length
-    ? `\\n\\nUser-approved personal memory (use only when relevant; do not assume anything beyond these notes):\\n- ${personalMemory.join("\\n- ")}`
+    ? `\n\nUser-approved personal memory (use only when relevant; do not assume anything beyond these notes):\n- ${personalMemory.join("\n- ")}`
     : "";
   const systemInstruction = `You are ANON H4X AI, a helpful, accurate assistant. Reply in ${languageName} unless the user asks for another language. You can explain concepts and write, debug, and review code in common programming languages. When providing code, use clear Markdown code fences with the correct language label, explain how to use it briefly, and never claim code was tested unless it actually was. Be honest about uncertainty. Do not assist with malware, credential theft, account compromise, or harmful cyber abuse; offer safe defensive alternatives.${memoryContext}`;
 
@@ -147,7 +147,7 @@ async function handleUpdate(update, env) {
       const note = text.slice("/remember".length).trim();
       const lang = await getLang(env, userId);
       if (!note) {
-        await sendText(env, chatId, lang === "tr" ? "Kullanım: /remember sevdiğim dil Türkçe\\nYalnızca kaydetmek istediğin, hassas olmayan bilgileri yaz. Şifre veya gizli anahtar kaydetme." : "Usage: /remember I prefer Turkish\\nSave only non-sensitive information you choose to remember. Never save passwords or secret keys.");
+        await sendText(env, chatId, lang === "tr" ? "Kullanım: /remember sevdiğim dil Türkçe\nYalnızca kaydetmek istediğin, hassas olmayan bilgileri yaz. Şifre veya gizli anahtar kaydetme." : "Usage: /remember I prefer Turkish\nSave only non-sensitive information you choose to remember. Never save passwords or secret keys.");
         return;
       }
       if (note.length > 300) {
@@ -174,9 +174,9 @@ async function handleUpdate(update, env) {
       let notes = [];
       try { notes = JSON.parse(await env.BOT_DATA.get(`memory:${userId}`) || "[]"); } catch {}
       const output = notes.length
-        ? notes.map((item, index) => `${index + 1}. ${item}`).join("\\n")
+        ? notes.map((item, index) => `${index + 1}. ${item}`).join("\n")
         : (lang === "tr" ? "Kişisel hafızanda henüz kayıt yok. Kaydetmek için /remember bilgi yaz." : "No personal memories saved yet. Use /remember followed by a note.");
-      await sendText(env, chatId, `🧠 ${lang === "tr" ? "Kişisel hafızan" : "Your personal memory"}:\\n${output}`);
+      await sendText(env, chatId, `🧠 ${lang === "tr" ? "Kişisel hafızan" : "Your personal memory"}:\n${output}`);
       return;
     }
 
@@ -250,7 +250,7 @@ async function handleUpdate(update, env) {
       return;
     }
     if (data === "menu:help") {
-      await sendText(env, chatId, "ℹ️ /start — Menü\n/language — Dil değiştir\n/exit — AI modundan çık\n/reset — AI sohbetini temizle", { reply_markup: mainKeyboard(lang) });
+      await sendText(env, chatId, "ℹ️ /start — Menü\n/language — Dil değiştir\n/exit — AI modundan çık\n/reset — Sohbet geçmişini temizle\n/remember <bilgi> — Kişisel hafızaya kaydet\n/memory — Hafızayı görüntüle\n/forget — Kişisel hafızayı sil", { reply_markup: mainKeyboard(lang) });
       return;
     }
   }
