@@ -271,7 +271,7 @@ async function sendFilesMenu(env, chatId, userId, lang) {
     return;
   }
   const rows = files.slice(0, 50).map((file, index) => [{
-    text: `📄 ${String(file.name || "Dosya").slice(0, 55)}`,
+    text: `📄 ${String(file.name || "Dosya").slice(0, 43)} · ${Math.max(0, Number(file.price) || 0) === 0 ? "Ücretsiz" : (Math.max(0, Number(file.price) || 0) + " bakiye")}`,
     callback_data: `file:get:${index}`
   }]);
   rows.push([{ text: tr ? "⬅️ Ana menü" : "⬅️ Main menu", callback_data: "back:home" }]);
@@ -295,6 +295,7 @@ async function saveIncomingDocument(msg, env, customName = "") {
     updated_at: new Date().toISOString()
   };
   const existing = files.findIndex(item => String(item.name).toLocaleLowerCase() === entry.name.toLocaleLowerCase());
+  entry.price = existing >= 0 ? Math.max(0, Number(files[existing].price) || 0) : 0;
   if (existing >= 0) files[existing] = entry;
   else files.unshift(entry);
   await env.BOT_DATA.put("public:files", JSON.stringify(files.slice(0, 100)));
@@ -337,7 +338,7 @@ async function sendAdminFiles(env, chatId, lang) {
   const files = await getStoredFiles(env);
   const tr = lang === "tr";
   const rows = files.map((file, index) => [
-    { text: `📄 ${String(file.name).slice(0, 35)}`, callback_data: `admin:file:noop:${index}` },
+    { text: `📄 ${String(file.name).slice(0, 25)} · ${Math.max(0, Number(file.price) || 0)} bakiye`, callback_data: `admin:file:price:${index}` },
     { text: tr ? "🗑 Sil" : "🗑 Delete", callback_data: `admin:file:del:${index}` }
   ]);
   rows.push([{ text: tr ? "⬅️ Geri" : "⬅️ Back", callback_data: "menu:admin" }]);
@@ -355,6 +356,22 @@ async function handleUpdate(update, env) {
     const text = (msg.text || "").trim();
     await registerUser(env, msg.from);
     const step = await env.BOT_DATA.get("admin_step:" + userId);
+    if (text && isAdmin(env, userId) && step === "file_price") {
+      const index = Number(await env.BOT_DATA.get("file_price_index:" + userId));
+      const price = Number(text);
+      await env.BOT_DATA.delete("admin_step:" + userId);
+      await env.BOT_DATA.delete("file_price_index:" + userId);
+      await deleteTelegramMessage(env, chatId, msg.message_id);
+      const files = await getStoredFiles(env);
+      if (!Number.isInteger(index) || index < 0 || index >= files.length || !Number.isInteger(price) || price < 0 || price > 1000000) {
+        await sendText(env, chatId, "⚠️ Geçersiz değer. Fiyat 0-1000000 arasında tam sayı olmalı.");
+      } else {
+        files[index].price = price;
+        await env.BOT_DATA.put("public:files", JSON.stringify(files));
+        await sendAdminFiles(env, chatId, await getLang(env, userId));
+      }
+      return;
+    }
     if(text && String(userId)===String(env.ADMIN_ID||"") && step==="daily_limit"){
       const limit=Number(text);await env.BOT_DATA.delete("admin_step:"+userId);await deleteTelegramMessage(env,chatId,msg.message_id);
       if(!Number.isInteger(limit)||limit<1||limit>1000){await sendText(env,chatId,"⚠️ 1-1000 arasında tam sayı gönder.");}
@@ -757,6 +774,16 @@ async function handleUpdate(update, env) {
       return;
     }
     if (data.startsWith("admin:file:noop:")) return;
+    if (data.startsWith("admin:file:price:")) {
+      if (!isAdmin(env, userId)) return;
+      const index = Number(data.split(":")[3]);
+      const files = await getStoredFiles(env);
+      if (!Number.isInteger(index) || index < 0 || index >= files.length) return;
+      await env.BOT_DATA.put("file_price_index:" + userId, String(index), { expirationTtl: 600 });
+      await env.BOT_DATA.put("admin_step:" + userId, "file_price", { expirationTtl: 600 });
+      await sendText(env, chatId, "💰 " + files[index].name + "\nŞu anki fiyat: " + (Number(files[index].price) || 0) + " bakiye.\nYeni fiyatı gönder. Ücretsiz yapmak için 0 yaz.");
+      return;
+    }
     if (data.startsWith("admin:file:del:")) {
       if (String(userId) !== String(env.ADMIN_ID || "")) return;
       const index = Number(data.split(":")[3]);
@@ -806,11 +833,27 @@ async function handleUpdate(update, env) {
         return;
       }
       const file = files[index];
-      await tg(env, "sendDocument", {
+      const price = Math.max(0, Number(file.price) || 0);
+      if (price > 0 && !isAdmin(env, userId)) {
+        const walletKey = "wallet:" + userId;
+        const balance = Math.max(0, Number(await env.BOT_DATA.get(walletKey)) || 0);
+        if (balance < price) {
+          await sendText(env, chatId, "❌ Bu dosya " + price + " bakiye. Bakiyen: " + balance + "\nEksik: " + (price - balance) + " bakiye.", { reply_markup: { inline_keyboard: [[{ text: "💰 Bakiye yükle", callback_data: "menu:premium" }], [{ text: "💳 Cüzdanım", callback_data: "menu:wallet" }], [{ text: "⬅️ Dosyalara dön", callback_data: "menu:files" }]] } });
+          return;
+        }
+        await env.BOT_DATA.put(walletKey, String(balance - price));
+      }
+      const sent = await tg(env, "sendDocument", {
         chat_id: chatId,
         document: file.file_id,
         caption: file.caption || file.name
       });
+      if (price > 0 && !isAdmin(env, userId) && (!sent || !sent.ok)) {
+        const walletKey = "wallet:" + userId;
+        const balance = Math.max(0, Number(await env.BOT_DATA.get(walletKey)) || 0);
+        await env.BOT_DATA.put(walletKey, String(balance + price));
+        await sendText(env, chatId, "⚠️ Dosya gönderilemedi. Kesilen bakiye iade edildi.");
+      }
       return;
     }
 
