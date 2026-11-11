@@ -90,6 +90,12 @@ function languageKeyboard() {
   return { inline_keyboard: rows };
 }
 
+function backToHomeKeyboard(lang) {
+  const keyboard = mainKeyboard(lang);
+  keyboard.inline_keyboard.push([{ text: lang === "tr" ? "⬅️ Geri" : "⬅️ Back", callback_data: "back:home" }]);
+  return keyboard;
+}
+
 function mainKeyboard(lang) {
   const t = LANGUAGES[lang] || LANGUAGES.en;
   return { inline_keyboard: [
@@ -399,15 +405,15 @@ async function handleUpdate(update, env) {
     }
     if (data === "menu:wallet") {
       const balance = await env.BOT_DATA.get(`wallet:${userId}`) || "0";
-      await sendText(env, chatId, `${t.wallet}: ${balance}`, { reply_markup: mainKeyboard(lang) });
+      await sendText(env, chatId, `${t.wallet}: ${balance}`, { reply_markup: backToHomeKeyboard(lang) });
       return;
     }
     if (data === "menu:premium") {
-      await sendText(env, chatId, "💎 Premium sistemi henüz etkinleştirilmedi.", { reply_markup: mainKeyboard(lang) });
+      await sendText(env, chatId, "💎 Premium sistemi henüz etkinleştirilmedi.", { reply_markup: backToHomeKeyboard(lang) });
       return;
     }
     if (data === "menu:help") {
-      await sendText(env, chatId, "ℹ️ /start — Menü\n/language — Dil değiştir\n/exit — AI modundan çık\n/reset — Sohbet geçmişini temizle\n/remember <bilgi> — Kişisel hafızaya kaydet\n/memory — Hafızayı görüntüle\n/forget — Kişisel hafızayı sil\n/settings — Kişilik ve hafıza ayarları", { reply_markup: mainKeyboard(lang) });
+      await sendText(env, chatId, "ℹ️ /start — Menü\n/language — Dil değiştir\n/exit — AI modundan çık\n/reset — Sohbet geçmişini temizle\n/remember <bilgi> — Kişisel hafızaya kaydet\n/memory — Hafızayı görüntüle\n/forget — Kişisel hafızayı sil\n/settings — Kişilik ve hafıza ayarları", { reply_markup: backToHomeKeyboard(lang) });
       return;
     }
   }
