@@ -14,6 +14,18 @@ const LANGUAGES = {
 const MODEL = "gemini-2.5-flash";
 const MAX_HISTORY = 12;
 
+// Country-local Google Play packages. Credits are intentionally more generous than the old 5 EUR = 4 credits rate.
+const TOPUP_CURRENCIES = {
+  EUR: { label: "Euro (€)", symbol: "€", region: "Almanya / Euro bölgesi" },
+  USD: { label: "ABD Doları ($)", symbol: "$", region: "ABD" },
+  TRY: { label: "Türk Lirası (₺)", symbol: "₺", region: "Türkiye" }
+};
+const TOPUP_PACKAGES = {
+  EUR: [{ amount: 5, credits: 50 }, { amount: 10, credits: 120 }, { amount: 25, credits: 330 }, { amount: 50, credits: 750 }],
+  USD: [{ amount: 10, credits: 110 }, { amount: 25, credits: 300 }, { amount: 50, credits: 650 }, { amount: 100, credits: 1400 }],
+  TRY: [{ amount: 25, credits: 7 }, { amount: 50, credits: 15 }, { amount: 100, credits: 32 }, { amount: 250, credits: 85 }]
+};
+
 const PERSONALITIES = {
   friendly: { tr: "Samimi ve arkadaş canlısı", en: "Friendly and warm", instruction: "Use a warm, friendly, encouraging tone while staying accurate." },
   professional: { tr: "Profesyonel", en: "Professional", instruction: "Use a professional, respectful, clear tone. Avoid slang." },
@@ -396,12 +408,16 @@ async function handleUpdate(update, env) {
       await deleteTelegramMessage(env, chatId, msg.message_id);
       let selection = null;
       try { selection = raw ? JSON.parse(raw) : null; } catch {}
-      if (!selection || !selection.eur || !selection.credits || text.length > 100) {
+      const currency = selection?.currency || (selection?.eur ? "EUR" : "");
+      const amount = Number(selection?.amount ?? selection?.eur);
+      const credits = Number(selection?.credits);
+      const validPackage = (TOPUP_PACKAGES[currency] || []).some(pack => pack.amount === amount && pack.credits === credits);
+      if (!selection || !validPackage || text.length > 100) {
         await sendText(env, chatId, "⚠️ Yükleme isteği bulunamadı. Premium bölümünden yeniden başla.");
         return;
       }
       const requestId = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
-      const request = { id: requestId, userId: String(userId), chatId: String(chatId), eur: selection.eur, credits: selection.credits, status: "pending" };
+      const request = { id: requestId, userId: String(userId), chatId: String(chatId), currency, amount, credits, status: "pending" };
       await env.BOT_DATA.put("topup_request:" + requestId, JSON.stringify(request), { expirationTtl: 604800 });
       const adminId = String(env.ADMIN_ID || "").trim();
       if (!adminId) {
@@ -409,10 +425,11 @@ async function handleUpdate(update, env) {
         await sendText(env, chatId, "⚠️ Yönetici ayarı bulunamadı. Lütfen daha sonra tekrar dene.");
         return;
       }
-      await sendText(env, adminId, "💳 YENİ GOOGLE PLAY YÜKLEME TALEBİ\n\nKullanıcı ID: " + userId + "\nPaket: " + selection.eur + " € → " + selection.credits + " bakiye\nTalep: " + requestId + "\n\nGoogle Play kodu (yalnızca yöneticiye):\n" + text + "\n\nKodu Google Play hesabında kullanıp başarılı olduğunu doğruladıktan sonra onayla.", {
+      const currencyInfo = TOPUP_CURRENCIES[currency];
+      await sendText(env, adminId, "💳 YENİ GOOGLE PLAY YÜKLEME TALEBİ\n\nKullanıcı ID: " + userId + "\nBölge: " + currencyInfo.region + "\nPaket: " + currencyInfo.symbol + amount + " → " + credits + " bakiye\nTalep: " + requestId + "\n\nGoogle Play kodu (yalnızca yöneticiye):\n" + text + "\n\nÖNEMLİ: Bu kodu yalnızca aynı ülke/para birimindeki Google Play hesabında kullanabilirsin. Kodun başarıyla kullanıldığını doğrulamadan onaylama.", {
         reply_markup: { inline_keyboard: [[{ text: "✅ Kodu kullandım, bakiyeyi ekle", callback_data: "topup:approve:" + requestId }, { text: "❌ Reddet", callback_data: "topup:reject:" + requestId }]] }
       });
-      await sendText(env, chatId, "✅ Kodun yöneticiye iletildi. Google Play'de kullanımını yönetici kontrol edecek; onaylanınca " + selection.credits + " bakiye eklenecek. Otomatik doğrulama yoktur.", { reply_markup: backToHomeKeyboard(await getLang(env,userId)) });
+      await sendText(env, chatId, "✅ Kodun yöneticiye iletildi. Paket: " + currencyInfo.symbol + amount + " → " + credits + " bakiye. Kod yalnızca satın alındığı ülke ve para birimindeki Google Play hesabında kullanılabilir; yönetici doğruladıktan sonra bakiyen eklenecek. Otomatik doğrulama yoktur.", { reply_markup: backToHomeKeyboard(await getLang(env,userId)) });
       return;
     }
 
@@ -959,24 +976,39 @@ async function handleUpdate(update, env) {
       await sendText(env, chatId, `${t.wallet}: ${balance}`, { reply_markup: backToHomeKeyboard(lang) });
       return;
     }
-    if (data === "menu:premium") {
-      await sendText(env, chatId, "💎 BAKİYE YÜKLE\n\nGoogle Play hediye kartı paketini seç. Kod yöneticiye iletilir; Google Play'de başarıyla kullanıldıktan sonra yönetici bakiyeni onaylar. Otomatik kod doğrulaması yoktur.", { reply_markup: { inline_keyboard: [
-        [{ text: "5 € → 4 bakiye", callback_data: "topup:pack:5" }],
-        [{ text: "10 € → 8 bakiye", callback_data: "topup:pack:10" }],
-        [{ text: "20 € → 16 bakiye", callback_data: "topup:pack:20" }],
-        [{ text: "50 € → 40 bakiye", callback_data: "topup:pack:50" }],
+    if (data === "menu:premium" || data === "topup:currencies") {
+      await sendText(env, chatId, "💎 BAKİYE YÜKLE\n\nÜlkenin Google Play mağazasına uygun para birimini seç. Bakiye paketleri artırıldı. Kod, yönetici tarafından elle kontrol edilir.\n\n⚠️ Google Play kodları ülke ve para birimine bağlıdır. Yönetici, kodu aynı bölgedeki Google Play hesabında kullanabilmelidir.", { reply_markup: { inline_keyboard: [
+        [{ text: "🇪🇺 Euro (€)", callback_data: "topup:currency:EUR" }],
+        [{ text: "🇺🇸 ABD Doları ($)", callback_data: "topup:currency:USD" }],
+        [{ text: "🇹🇷 Türk Lirası (₺)", callback_data: "topup:currency:TRY" }],
         [{ text: "⬅️ Ana menü", callback_data: "back:home" }]
       ] } });
       return;
     }
+    if (data.startsWith("topup:currency:")) {
+      const currency = data.split(":")[2];
+      const info = TOPUP_CURRENCIES[currency];
+      const packs = TOPUP_PACKAGES[currency];
+      if (!info || !packs) return;
+      const rows = packs.map(pack => [{
+        text: info.symbol + pack.amount + " → " + pack.credits + " bakiye",
+        callback_data: "topup:pack:" + currency + ":" + pack.amount
+      }]);
+      rows.push([{ text: "⬅️ Para birimi seç", callback_data: "topup:currencies" }]);
+      await sendText(env, chatId, "💳 " + info.label + "\nBölge: " + info.region + "\n\nPaketini seç:", { reply_markup: { inline_keyboard: rows } });
+      return;
+    }
     if (data.startsWith("topup:pack:")) {
-      const eur = Number(data.split(":")[2]);
-      const creditsByEuro = { 5: 4, 10: 8, 20: 16, 50: 40 };
-      const credits = creditsByEuro[eur];
-      if (!credits) return;
-      await env.BOT_DATA.put("topup_selection:" + userId, JSON.stringify({ eur, credits }), { expirationTtl: 900 });
+      const parts = data.split(":");
+      // Also accept old Euro buttons still present in older Telegram messages.
+      const currency = parts.length >= 4 ? parts[2] : "EUR";
+      const amount = Number(parts.length >= 4 ? parts[3] : parts[2]);
+      const pack = (TOPUP_PACKAGES[currency] || []).find(item => item.amount === amount);
+      if (!pack) return;
+      await env.BOT_DATA.put("topup_selection:" + userId, JSON.stringify({ currency, amount, credits: pack.credits }), { expirationTtl: 900 });
       await env.BOT_DATA.put("admin_step:" + userId, "googleplay_code", { expirationTtl: 900 });
-      await sendText(env, chatId, "🎁 " + eur + " € Google Play kodunu şimdi gönder. Kod yalnızca yöneticiye iletilecek. İptal için /cancel yaz.");
+      const info = TOPUP_CURRENCIES[currency];
+      await sendText(env, chatId, "🎁 " + info.symbol + amount + " Google Play kodunu şimdi gönder. Kod yalnızca yöneticiye iletilecek. Kodun bölgesi (" + info.region + ") yönetici hesabıyla uyumlu olmalı. İptal için /cancel yaz.");
       return;
     }
     if (data === "menu:help") {
