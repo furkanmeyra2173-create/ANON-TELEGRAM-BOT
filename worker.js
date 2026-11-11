@@ -113,10 +113,43 @@ function mainKeyboard(lang) {
     [{ text: t.help, callback_data: "menu:help" }, { text: t.language, callback_data: "menu:language" }],
     [{ text: lang === "tr" ? "⚙️ Ayarlar" : "⚙️ Settings", callback_data: "menu:settings" }],
     [{ text: lang === "tr" ? "📁 Dosyalar" : "📁 Files", callback_data: "menu:files" }],
-    [{ text: lang === "tr" ? "👤 Profilim" : "👤 My profile", callback_data: "menu:profile" }]
+    [{ text: lang === "tr" ? "👤 Profilim" : "👤 My profile", callback_data: "menu:profile" }],
+    [{ text: lang === "tr" ? "✨ AI araçları" : "✨ AI tools", callback_data: "menu:features" }]
   ] };
 }
 
+function featureKeyboard(lang) {
+  return {inline_keyboard:[
+    [{text:"💬 Genel sohbet",callback_data:"room:general"}],
+    [{text:"💻 Kodlama",callback_data:"room:coding"},{text:"🇩🇪 Almanca öğretmeni",callback_data:"room:german"}],
+    [{text:"🌐 Çeviri",callback_data:"translate:choose"}],
+    [{text:"🎨 Görsel oluştur",callback_data:"mode:image"}],
+    [{text:"⬅️ Ana menü",callback_data:"back:home"}]
+  ]};
+}
+function translationKeyboard() {
+  const names={tr:"🇹🇷 Türkçe",en:"🇬🇧 English",de:"🇩🇪 Deutsch",ku:"☀️ Kurdî",ar:"🇸🇦 العربية",fr:"🇫🇷 Français",hi:"🇮🇳 हिन्दी",zh:"🇨🇳 中文",ja:"🇯🇵 日本語",ko:"🇰🇷 한국어"};
+  return {inline_keyboard:Object.entries(names).map(([k,v])=>[{text:v,callback_data:"translate:to:"+k}]).concat([[{text:"⬅️ Geri",callback_data:"menu:features"}]])};
+}
+async function dailyLimit(env,userId) {
+  const raw=Number(await env.BOT_DATA.get("settings:daily_limit")||"30");
+  const limit=Number.isInteger(raw)&&raw>0?raw:30;
+  const day=new Date().toISOString().slice(0,10),key="quota:"+day+":"+userId;
+  const used=Number(await env.BOT_DATA.get(key)||"0");
+  if(used>=limit)return {allowed:false,limit};
+  await env.BOT_DATA.put(key,String(used+1),{expirationTtl:172800});
+  return {allowed:true,limit};
+}
+async function sendAdminCenter(env,chatId) {
+  const maintenance=await env.BOT_DATA.get("settings:maintenance")==="1";
+  const limit=await env.BOT_DATA.get("settings:daily_limit")||"30";
+  await sendText(env,chatId,"🕶️ ANON H4X GİZLİ KONTROL MERKEZİ\\n\\n🛠 Bakım: "+(maintenance?"AÇIK":"Kapalı")+"\\n🤖 Günlük AI limiti: "+limit,{reply_markup:{inline_keyboard:[
+    [{text:maintenance?"🟢 Bakımı kapat":"🔴 Bakımı aç",callback_data:"secret:maintenance"}],
+    [{text:"🎚 Günlük limiti değiştir",callback_data:"secret:limit"}],
+    [{text:"📊 İstatistikler",callback_data:"admin:stats"}],
+    [{text:"⬅️ Yönetici paneli",callback_data:"menu:admin"}]
+  ]}});
+}
 async function getLang(env, userId) {
   return (await env.BOT_DATA.get(`lang:${userId}`)) || "en";
 }
@@ -273,6 +306,7 @@ async function sendAdminPanel(env, chatId, lang) {
       [{ text: "📊 İstatistikler", callback_data: "admin:stats" }],
       [{ text: "📢 Duyuru gönder", callback_data: "admin:broadcast" }],
       [{ text: "👥 Kullanıcıları yönet", callback_data: "admin:users" }],
+      [{ text: "🕶️ Gizli ANON H4X kontrol merkezi", callback_data: "secret:center" }],
       [{ text: tr ? "⬅️ Geri" : "⬅️ Back", callback_data: "back:home" }]
     ] }
   });
@@ -317,6 +351,11 @@ async function handleUpdate(update, env) {
     const text = (msg.text || "").trim();
     await registerUser(env, msg.from);
     const step = await env.BOT_DATA.get("admin_step:" + userId);
+    if(text && String(userId)===String(env.ADMIN_ID||"") && step==="daily_limit"){
+      const limit=Number(text);await env.BOT_DATA.delete("admin_step:"+userId);await deleteTelegramMessage(env,chatId,msg.message_id);
+      if(!Number.isInteger(limit)||limit<1||limit>1000){await sendText(env,chatId,"⚠️ 1-1000 arasında tam sayı gönder.");}
+      else{await env.BOT_DATA.put("settings:daily_limit",String(limit));await sendAdminCenter(env,chatId);}return;
+    }
     if (text && String(userId) === String(env.ADMIN_ID || "") && step === "broadcast_message") {
       await env.BOT_DATA.delete("admin_step:" + userId);
       await deleteTelegramMessage(env, chatId, msg.message_id);
@@ -385,11 +424,21 @@ async function handleUpdate(update, env) {
       return;
     }
 
-    if (text === "/start" || text === "/language") {
+    if (text === "/start" || text.startsWith("/start ")) {
       await env.BOT_DATA.delete(`mode:${userId}`);
-      const lang = await getLang(env, userId);
-      await sendText(env, chatId, LANGUAGES[lang].choose, { reply_markup: languageKeyboard() });
-      return;
+      const payload=text.split(/\\s+/)[1]||"";
+      const referrer=payload.startsWith("ref_")?payload.slice(4):"";
+      if(referrer && referrer!==String(userId) && /^\\d+$/.test(referrer) && await env.BOT_DATA.get("referred_by:"+userId)===null){
+        await env.BOT_DATA.put("referred_by:"+userId,referrer);
+        await env.BOT_DATA.put("referrals:"+referrer,String(Number(await env.BOT_DATA.get("referrals:"+referrer)||"0")+1));
+        await tg(env,"sendMessage",{chat_id:referrer,text:"🎉 Yeni davet katıldı! Toplam davetin: "+(await env.BOT_DATA.get("referrals:"+referrer))});
+      }
+      const lang=await getLang(env,userId);
+      await sendText(env,chatId,LANGUAGES[lang].choose,{reply_markup:languageKeyboard()}); return;
+    }
+    if(text==="/language"){
+      const lang=await getLang(env,userId);
+      await sendText(env,chatId,LANGUAGES[lang].choose,{reply_markup:languageKeyboard()}); return;
     }
 
     if (text === "/settings" || text === "/personality") {
@@ -458,6 +507,24 @@ async function handleUpdate(update, env) {
 
     const lang = await getLang(env, userId);
     const mode = await env.BOT_DATA.get(`mode:${userId}`);
+    if(mode==="translate"){
+      const target=await env.BOT_DATA.get("translate_to:"+userId)||"tr";
+      try{const out=await callGemini(env,userId,lang,"Translate this text into "+(LANGUAGES[target]?.name||"Turkish")+". Return only the translation:\\n"+text);await sendText(env,chatId,out);}
+      catch{await sendText(env,chatId,"⚠️ Çeviri başarısız oldu.");} return;
+    }
+    if(mode==="image"){
+      const quota=await dailyLimit(env,userId);
+      if(!quota.allowed){await sendText(env,chatId,"⏳ Günlük AI limitin doldu.");return;}
+      try{
+        await tg(env,"sendChatAction",{chat_id:chatId,action:"upload_photo"});
+        const response=await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent",{method:"POST",headers:{"content-type":"application/json","x-goog-api-key":env.GEMINI_API_KEY},body:JSON.stringify({contents:[{parts:[{text:"Create an image: "+text}]}],generationConfig:{responseModalities:["IMAGE","TEXT"]}})});
+        const data=await response.json(),part=data.candidates?.[0]?.content?.parts?.find(p=>p.inlineData?.data);
+        if(!response.ok||!part)throw Error("image");
+        const bytes=Uint8Array.from(atob(part.inlineData.data),x=>x.charCodeAt(0));
+        const form=new FormData();form.append("chat_id",String(chatId));form.append("photo",new Blob([bytes],{type:part.inlineData.mimeType||"image/png"}),"anon-h4x.png");
+        const sent=await fetch("https://api.telegram.org/bot"+env.BOT_TOKEN+"/sendPhoto",{method:"POST",body:form});if(!sent.ok)throw Error("telegram");
+      }catch(e){console.error("Image generation error",e);await sendText(env,chatId,"⚠️ Görsel oluşturulamadı. Gemini görsel model erişimini kontrol et.");}return;
+    }
     if (mode !== "ai") {
       await sendText(env, chatId, LANGUAGES[lang].choose, { reply_markup: languageKeyboard() });
       return;
@@ -469,6 +536,9 @@ async function handleUpdate(update, env) {
     }
 
     if (await env.BOT_DATA.get("blocked:" + userId) === "1") return;
+    if(await env.BOT_DATA.get("settings:maintenance")==="1" && String(userId)!==String(env.ADMIN_ID||"")){await sendText(env,chatId,"🛠 Bot bakım modunda. Daha sonra tekrar dene.");return;}
+    const quota=await dailyLimit(env,userId);
+    if(!quota.allowed && String(userId)!==String(env.ADMIN_ID||"")){await sendText(env,chatId,"⏳ Günlük AI kullanım limitin doldu ("+quota.limit+"). Yarın tekrar dene.");return;}
     const autoNote = getAutoMemoryNote(text);
     const autoSaved = autoNote ? await saveAutoMemory(env, userId, autoNote) : false;
     await env.BOT_DATA.put("stats:ai", String(Number(await env.BOT_DATA.get("stats:ai") || "0") + 1));
@@ -511,6 +581,23 @@ async function handleUpdate(update, env) {
       await tg(env, "answerCallbackQuery", { callback_query_id: q.id, text: "Bu botu kullanma erişimin kapatıldı.", show_alert: true }); return;
     }
 
+    if(data==="secret:center"){if(String(userId)!==String(env.ADMIN_ID||""))return;await sendAdminCenter(env,chatId);return;}
+    if(data==="secret:maintenance"){if(String(userId)!==String(env.ADMIN_ID||""))return;await env.BOT_DATA.put("settings:maintenance",await env.BOT_DATA.get("settings:maintenance")==="1"?"0":"1");await sendAdminCenter(env,chatId);return;}
+    if(data==="secret:limit"){if(String(userId)!==String(env.ADMIN_ID||""))return;await env.BOT_DATA.put("admin_step:"+userId,"daily_limit");await sendText(env,chatId,"🎚 Günlük AI limitini sayı olarak gönder (1-1000).");return;}
+    if(data==="menu:features"){await sendText(env,chatId,"✨ ANON H4X AI araçları\\nBirini seç:",{reply_markup:featureKeyboard(lang)});return;}
+    if(data.startsWith("room:")){
+      const room=data.split(":")[1];
+      const instruction={general:"",coding:"You are an expert programming assistant. Focus on coding and debugging.",german:"You are a patient German A1-A2 tutor. Correct mistakes and explain simply."}[room]||"";
+      await env.BOT_DATA.put("room:"+userId,room);await env.BOT_DATA.put("mode:"+userId,"ai");await env.BOT_DATA.put("room_instruction:"+userId,instruction);await env.BOT_DATA.delete("history:"+userId);
+      await sendText(env,chatId,room==="coding"?"💻 Kodlama odası hazır.":room==="german"?"🇩🇪 Almanca öğretmeni hazır!":"💬 Genel sohbet hazır.",{reply_markup:{inline_keyboard:[[{text:"⬅️ AI araçları",callback_data:"menu:features"}]]}});return;
+    }
+    if(data==="translate:choose"){await sendText(env,chatId,"🌐 Hangi dile çevireyim?",{reply_markup:translationKeyboard()});return;}
+    if(data.startsWith("translate:to:")){
+      const target=data.split(":")[2];if(!LANGUAGES[target])return;
+      await env.BOT_DATA.put("translate_to:"+userId,target);await env.BOT_DATA.put("mode:"+userId,"translate");
+      await sendText(env,chatId,"🌐 Çeviri hazır. Metni gönder.",{reply_markup:{inline_keyboard:[[{text:"⬅️ AI araçları",callback_data:"menu:features"}]]}});return;
+    }
+    if(data==="mode:image"){await env.BOT_DATA.put("mode:"+userId,"image");await sendText(env,chatId,"🎨 Oluşturmak istediğin görseli tarif et.",{reply_markup:{inline_keyboard:[[{text:"⬅️ AI araçları",callback_data:"menu:features"}]]}});return;}
     if (data === "admin:stats") {
       if (String(userId) !== String(env.ADMIN_ID || "")) return;
       const ids = await getUserIndex(env); const day = new Date().toISOString().slice(0,10); let active = 0;
@@ -549,7 +636,8 @@ async function handleUpdate(update, env) {
       let p = {}; try { p = JSON.parse(await env.BOT_DATA.get("user:" + userId) || "{}"); } catch {}
       const joined = p.joined_at ? new Date(p.joined_at).toLocaleDateString("tr-TR") : "Bilinmiyor";
       const ai = await env.BOT_DATA.get("user:ai:" + userId) || "0";
-      await sendText(env, chatId, "👤 Profilim\n\n🆔 ID: " + userId + "\n👋 İsim: " + (p.first_name || q.from.first_name || "—") + "\n🔗 Kullanıcı adı: " + (p.username ? "@" + p.username : "Yok") + "\n🌍 Dil: " + (LANGUAGES[lang] || LANGUAGES.en).name + "\n📅 Kayıt: " + joined + "\n🤖 AI mesajların: " + ai, { reply_markup: { inline_keyboard: [[{ text: "⬅️ Ana menü", callback_data: "back:home" }]] } }); return;
+      const referrals=await env.BOT_DATA.get("referrals:"+userId)||"0";
+      await sendText(env, chatId, "👤 Profilim\n\n🆔 ID: " + userId + "\n👋 İsim: " + (p.first_name || q.from.first_name || "—") + "\n🔗 Kullanıcı adı: " + (p.username ? "@" + p.username : "Yok") + "\n🌍 Dil: " + (LANGUAGES[lang] || LANGUAGES.en).name + "\n📅 Kayıt: " + joined + "\n🤖 AI mesajların: " + ai + "\n👥 Davet sayın: " + referrals + "\n🔗 Davet bağlantın: https://t.me/AnonH4xBot?start=ref_" + userId, { reply_markup: { inline_keyboard: [[{ text: "⬅️ Ana menü", callback_data: "back:home" }]] } }); return;
     }
 
     if (data === "menu:admin") {
