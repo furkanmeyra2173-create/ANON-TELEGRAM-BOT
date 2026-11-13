@@ -25,6 +25,12 @@ const TOPUP_PACKAGES = {
   USD: [{ amount: 10, credits: 55 }, { amount: 25, credits: 140 }, { amount: 50, credits: 300 }, { amount: 100, credits: 650 }],
   TRY: [{ amount: 25, credits: 7 }, { amount: 50, credits: 15 }, { amount: 100, credits: 32 }, { amount: 250, credits: 85 }]
 };
+const STAR_PACKAGES = [
+  { stars: 10, credits: 20 },
+  { stars: 25, credits: 55 },
+  { stars: 50, credits: 120 },
+  { stars: 100, credits: 260 }
+];
 
 const PERSONALITIES = {
   friendly: { tr: "Samimi ve arkadaş canlısı", en: "Friendly and warm", instruction: "Use a warm, friendly, encouraging tone while staying accurate." },
@@ -362,13 +368,60 @@ async function sendAdminFiles(env, chatId, lang) {
 }
 
 async function handleUpdate(update, env) {
+  if (update.pre_checkout_query) {
+    const query = update.pre_checkout_query;
+    let order = null;
+    try { order = JSON.parse(await env.BOT_DATA.get("stars_order:" + query.invoice_payload) || "null"); } catch {}
+    const valid = order && order.status === "pending"
+      && String(order.userId) === String(query.from.id)
+      && query.currency === "XTR"
+      && Number(query.total_amount) === Number(order.stars);
+    await tg(env, "answerPreCheckoutQuery", {
+      pre_checkout_query_id: query.id,
+      ok: !!valid,
+      ...(!valid ? { error_message: "Bu ödeme isteği geçersiz veya süresi dolmuş. Lütfen yeni bir paket seç." } : {})
+    });
+    return;
+  }
+
   if (update.message) {
     const msg = update.message;
-    if (!msg.from || !msg.chat || (!msg.text && !msg.document)) return;
+    if (!msg.from || !msg.chat || (!msg.text && !msg.document && !msg.successful_payment)) return;
     const userId = msg.from.id;
     const chatId = msg.chat.id;
     const text = (msg.text || "").trim();
     await registerUser(env, msg.from);
+
+    if (msg.successful_payment) {
+      const payment = msg.successful_payment;
+      const payload = String(payment.invoice_payload || "");
+      let order = null;
+      try { order = JSON.parse(await env.BOT_DATA.get("stars_order:" + payload) || "null"); } catch {}
+      const chargeId = String(payment.telegram_payment_charge_id || "");
+      const chargeKey = "stars_charge:" + chargeId;
+      if (!order || order.status !== "pending" || String(order.userId) !== String(userId)
+        || payment.currency !== "XTR" || Number(payment.total_amount) !== Number(order.stars) || !chargeId) {
+        await sendText(env, chatId, "⚠️ Ödeme alındı ancak sipariş doğrulanamadı. Lütfen yöneticiyle iletişime geç. Ödeme kodu: " + payload);
+        return;
+      }
+      if (await env.BOT_DATA.get(chargeKey)) {
+        await sendText(env, chatId, "✅ Bu ödeme daha önce hesabına işlendi.");
+        return;
+      }
+      const walletKey = "wallet:" + userId;
+      const current = Number(await env.BOT_DATA.get(walletKey) || "0");
+      const balance = Number.isFinite(current) && current >= 0 ? current : 0;
+      await env.BOT_DATA.put(walletKey, String(balance + order.credits));
+      order.status = "paid";
+      order.chargeId = chargeId;
+      order.paidAt = new Date().toISOString();
+      await env.BOT_DATA.put("stars_order:" + payload, JSON.stringify(order), { expirationTtl: 31536000 });
+      await env.BOT_DATA.put(chargeKey, payload, { expirationTtl: 31536000 });
+      await sendText(env, chatId, "⭐ Telegram Stars ödemen başarılı!\n\nÖdenen: " + order.stars + " Stars\nEklenen: +" + order.credits + " bakiye\nYeni bakiyen: " + (balance + order.credits), { reply_markup: backToHomeKeyboard(await getLang(env, userId)) });
+      const adminId = String(env.ADMIN_ID || "").trim();
+      if (adminId) await sendText(env, adminId, "⭐ YENİ STARS ÖDEMESİ\nKullanıcı: " + userId + "\nÖdeme: " + order.stars + " Stars\nBakiye: +" + order.credits + "\nCharge: " + chargeId);
+      return;
+    }
     // Keep ordinary-user chats clean: remove the incoming message after capturing its text/document data.
     // Admin workflow already deletes its own input at the relevant processing steps.
     if (!isAdmin(env, userId)) await deleteTelegramMessage(env, chatId, msg.message_id);
@@ -981,8 +1034,40 @@ async function handleUpdate(update, env) {
         [{ text: "🇪🇺 Euro (€)", callback_data: "topup:currency:EUR" }],
         [{ text: "🇺🇸 ABD Doları ($)", callback_data: "topup:currency:USD" }],
         [{ text: "🇹🇷 Türk Lirası (₺)", callback_data: "topup:currency:TRY" }],
+        [{ text: "⭐ Telegram Stars ile yükle", callback_data: "topup:stars" }],
         [{ text: "⬅️ Ana menü", callback_data: "back:home" }]
       ] } });
+      return;
+    }
+    if (data === "topup:stars") {
+      const rows = STAR_PACKAGES.map((pack, index) => [{
+        text: "⭐ " + pack.stars + " Stars → " + pack.credits + " bakiye",
+        callback_data: "topup:starpack:" + index
+      }]);
+      rows.push([{ text: "⬅️ Bakiye yükleme", callback_data: "menu:premium" }]);
+      await sendText(env, chatId, "⭐ TELEGRAM STARS\n\nÖdemeyi Telegram'ın güvenli ödeme ekranından yapabilirsin. Ödeme tamamlanınca bakiye otomatik eklenir.\n\nPaketini seç:", { reply_markup: { inline_keyboard: rows } });
+      return;
+    }
+    if (data.startsWith("topup:starpack:")) {
+      const index = Number(data.split(":")[2]);
+      const pack = STAR_PACKAGES[index];
+      if (!Number.isInteger(index) || !pack) return;
+      const payload = crypto.randomUUID().replace(/-/g, "");
+      const order = { payload, userId: String(userId), chatId: String(chatId), stars: pack.stars, credits: pack.credits, status: "pending", createdAt: new Date().toISOString() };
+      await env.BOT_DATA.put("stars_order:" + payload, JSON.stringify(order), { expirationTtl: 900 });
+      const invoice = await tg(env, "sendInvoice", {
+        chat_id: chatId,
+        title: "ANON H4X Bakiye",
+        description: pack.credits + " bakiye yüklemesi",
+        payload,
+        currency: "XTR",
+        prices: [{ label: pack.credits + " bakiye", amount: pack.stars }],
+        start_parameter: "anonh4x_" + payload
+      });
+      if (!invoice || !invoice.ok) {
+        await env.BOT_DATA.delete("stars_order:" + payload);
+        await sendText(env, chatId, "⚠️ Telegram ödeme ekranı oluşturulamadı. Lütfen tekrar dene.");
+      }
       return;
     }
     if (data.startsWith("topup:currency:")) {
