@@ -1,0 +1,21 @@
+services:
+  - type: worker
+    name: anon-h4x-telegram-bot
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeploy: true
+    disk:
+      name: anon-h4x-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: DATABASE_PATH
+        value: /var/data/anon_h4x.sqlite3
+      - key: APK_TOOL_WORK_DIR
+        value: /tmp/anon_apk_tool
