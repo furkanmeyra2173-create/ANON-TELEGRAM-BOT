@@ -34,7 +34,7 @@ def _user_dir(context: ContextTypes.DEFAULT_TYPE) -> Path:
     path = context.user_data.get("apk_work_dir")
     if not path:
         BASE_DIR.mkdir(parents=True, exist_ok=True)
-        path = tempfile.mkdtemp(prefix=f"{context._user_id}_", dir=BASE_DIR)
+        path = tempfile.mkdtemp(prefix="session_", dir=BASE_DIR)
         context.user_data["apk_work_dir"] = path
     return Path(path)
 
@@ -59,6 +59,8 @@ async def _run(*args: str, timeout: int = 300):
 
 class APKToolHandler:
     async def start_apk_tool(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.callback_query:
+            await update.callback_query.answer()
         context.user_data.pop("apk_path", None)
         context.user_data.pop("new_app_name", None)
         context.user_data.pop("new_package", None)
@@ -183,7 +185,8 @@ class APKToolHandler:
         return CHOOSE_ACTION
 
     async def skip(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.effective_message.reply_text("/skip komutunu ilgili adımda kullanabilirsin.")
+        await update.effective_message.reply_text("İşlem iptal edildi.")
+        self._cleanup(context)
         return ConversationHandler.END
 
     async def build_and_sign(self, context: ContextTypes.DEFAULT_TYPE) -> Path:
@@ -203,7 +206,10 @@ class APKToolHandler:
         if "new_package" in context.user_data:
             root.set("package", context.user_data["new_package"])
         if "new_app_name" in context.user_data:
-            root.set(ANDROID_NS + "label", context.user_data["new_app_name"])
+            application = root.find("application")
+            if application is None:
+                raise RuntimeError("Manifest içinde application etiketi bulunamadı.")
+            application.set(ANDROID_NS + "label", context.user_data["new_app_name"])
         tree.write(manifest_path, encoding="utf-8", xml_declaration=True)
 
         await _run("apktool", "b", "-o", str(unsigned), str(decoded))
