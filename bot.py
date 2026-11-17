@@ -674,14 +674,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in ADMIN_IDS:
-        await update.message.reply_text("⛔ This command is for bot admins only.")u:home")]]
-        ),
-    )
-
-
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id not in ADMIN_IDS:
         await update.message.reply_text("⛔ This command is for bot admins only.")
         return
     with db() as connection:
